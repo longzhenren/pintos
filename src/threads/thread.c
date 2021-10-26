@@ -335,7 +335,25 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  // thread_current ()->priority = new_priority;
+
+  if (thread_mlfqs)
+    return;
+
+  enum intr_level old_level;
+
+  struct thread *cur = thread_current ();
+  cur->original_priority = new_priority;
+
+  old_level = intr_disable ();
+
+  if (list_empty (&cur->holding_locks) || new_priority > cur->priority)
+    {
+      cur->priority = new_priority;
+      thread_yield ();
+    }
+
+  intr_set_level (old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -343,6 +361,66 @@ int
 thread_get_priority (void) 
 {
   return thread_current ()->priority;
+}
+
+bool
+cmp_thread_priority_reverse__thread (const struct list_elem *a, const struct list_elem *b, void *aux)
+{
+  struct thread *thread_a = list_entry (a, struct thread, elem);
+  struct thread *thread_b = list_entry (b, struct thread, elem);
+
+  return thread_a->priority > thread_b->priority;
+}
+
+bool
+cmp_lock_max_holder_priority__thread (const struct list_elem *a, const struct list_elem *b, void *aux)
+{
+  struct lock *lock_a = list_entry (a, struct lock, elem);
+  struct lock *lock_b = list_entry (b, struct lock, elem);
+
+  return lock_a->max_holder_priority < lock_b->max_holder_priority;
+}
+
+void
+thread_update_priority (struct thread *t)
+{
+  enum intr_level old_level;
+
+  struct list_elem *max_holder_priority_lock;
+  int priority = t->original_priority;
+  int max_lock_holder_priority;
+
+  old_level = intr_disable ();
+
+  if (!list_empty (&t->holding_locks))
+    {
+      max_holder_priority_lock = list_max (&t->holding_locks, cmp_lock_max_holder_priority__thread, NULL);
+      max_lock_holder_priority = list_entry (max_holder_priority_lock, struct lock, elem)->max_holder_priority;
+      if (max_lock_holder_priority > priority)
+        priority = max_lock_holder_priority;
+    }
+
+  t->priority = priority;
+
+  intr_set_level (old_level);
+}
+
+void
+thread_donate_priority (struct thread *t)
+{
+  enum intr_level old_level;
+
+  old_level = intr_disable ();
+  
+  thread_update_priority (t);
+
+  if (t->status == THREAD_READY)
+    {
+      list_remove (&t->elem);
+      list_insert_ordered (&ready_list, &t->elem, cmp_thread_priority_reverse__thread, NULL);
+    }
+
+  intr_set_level (old_level);
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -463,6 +541,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+
+  t->original_priority = priority;
+  t->current_lock = NULL;
+  list_init (&t->holding_locks);
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
