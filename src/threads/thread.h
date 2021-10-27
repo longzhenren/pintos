@@ -146,8 +146,8 @@ int thread_get_load_avg(void);
 /* code by zzb start */
 /* mlfqs function headers */
 void thread_mlfqs_add_recent_cpu(int count);
-void thread_mlfqs_load_avg_update();
-void thread_mlfqs_recent_cpu_update();
+void thread_mlfqs_load_avg_update(void);
+void thread_mlfqs_recent_cpu_update(void);
 void thread_mlfqs_update_priority(struct thread *t);
 /* code by zzb end */
 
