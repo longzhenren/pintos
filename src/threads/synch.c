@@ -395,7 +395,7 @@ cond_wait (struct condition *cond, struct lock *lock)
 }
 
 bool
-cmp_cond_semaphore_thread_priority_synch (const struct list_elem *a, const struct list_elem *b, void *aux)
+cmp_cond_semaphore_thread_priority__synch (const struct list_elem *a, const struct list_elem *b, void *aux)
 {
   struct semaphore_elem *semaphore_a = list_entry (a, struct semaphore_elem, elem);
   struct semaphore_elem *semaphore_b = list_entry (b, struct semaphore_elem, elem);
@@ -424,7 +424,7 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
 
   if (!list_empty (&cond->waiters)) 
     {
-      max_priority_thread_semaphore = list_max (&cond->waiters, cmp_cond_semaphore_thread_priority_synch, NULL);
+      max_priority_thread_semaphore = list_max (&cond->waiters, cmp_cond_semaphore_thread_priority__synch, NULL);
       list_remove(max_priority_thread_semaphore);
 
       sema_up (&list_entry (max_priority_thread_semaphore,
