@@ -103,9 +103,10 @@ struct thread
   uint32_t *pagedir; /* Page directory. */
 #endif
 
-  /* Owned by thread.c. */
-  unsigned magic; /* Detects stack overflow. */
-};
+    /* Owned by thread.c. */
+    unsigned magic;                     /* Detects stack overflow. */
+    int64_t ticks_blocked;
+  };
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -151,4 +152,5 @@ void thread_mlfqs_recent_cpu_update();
 void thread_mlfqs_update_priority(struct thread *t);
 /* code by zzb end */
 
+void blocked_thread_check (struct thread *t, void *aux UNUSED);
 #endif /* threads/thread.h */
