@@ -349,20 +349,17 @@ void thread_set_priority(int new_priority)
   if (thread_mlfqs)
     return;
 
-  enum intr_level old_level;
-
   struct thread *cur = thread_current();
+
+  // 先设一下原来的优先级
   cur->original_priority = new_priority;
 
-  old_level = intr_disable();
-
+  // 没有持有锁或者新的优先级比当前优先级高，那就重设线程优先级并重新调度
   if (list_empty(&cur->holding_locks) || new_priority > cur->priority)
   {
     cur->priority = new_priority;
     thread_yield();
   }
-
-  intr_set_level(old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -371,61 +368,40 @@ int thread_get_priority(void)
   return thread_current()->priority;
 }
 
-bool cmp_thread_priority_reverse__thread(const struct list_elem *a, const struct list_elem *b, void *aux)
-{
-  struct thread *thread_a = list_entry(a, struct thread, elem);
-  struct thread *thread_b = list_entry(b, struct thread, elem);
-
-  return thread_a->priority > thread_b->priority;
-}
-
-bool cmp_lock_max_holder_priority__thread(const struct list_elem *a, const struct list_elem *b, void *aux)
+bool cmp_lock_max_priority__thread(const struct list_elem *a, const struct list_elem *b, void *aux)
 {
   struct lock *lock_a = list_entry(a, struct lock, elem);
   struct lock *lock_b = list_entry(b, struct lock, elem);
 
-  return lock_a->max_holder_priority < lock_b->max_holder_priority;
+  return lock_a->max_priority < lock_b->max_priority;
 }
 
 void thread_update_priority(struct thread *t)
 {
-  enum intr_level old_level;
+  struct list_elem *max_priority_lock;
+  int max_priority = t->original_priority;
+  int max_lock_priority;
 
-  struct list_elem *max_holder_priority_lock;
-  int priority = t->original_priority;
-  int max_lock_holder_priority;
-
-  old_level = intr_disable();
-
+  // 没有持有锁的话，那就直接更新成原来的优先级
   if (!list_empty(&t->holding_locks))
   {
-    max_holder_priority_lock = list_max(&t->holding_locks, cmp_lock_max_holder_priority__thread, NULL);
-    max_lock_holder_priority = list_entry(max_holder_priority_lock, struct lock, elem)->max_holder_priority;
-    if (max_lock_holder_priority > priority)
-      priority = max_lock_holder_priority;
+    // 找到持有锁中的最大优先级
+    max_priority_lock = list_max(&t->holding_locks, cmp_lock_max_priority__thread, NULL);
+    max_lock_priority = list_entry(max_priority_lock, struct lock, elem)->max_priority;
+
+    // 比当前（即原来）的优先级大的话，那就设成找到的最大优先级
+    if (max_priority < max_lock_priority)
+    {
+      max_priority = max_lock_priority;
+    }
   }
 
-  t->priority = priority;
+  t->priority = max_priority;
 
-  intr_set_level(old_level);
+  // 完了以后就更新一下就绪队列，确保优先级顺序
+  list_sort(&ready_list, thread_cmp_priority, NULL);
 }
 
-void thread_donate_priority(struct thread *t)
-{
-  enum intr_level old_level;
-
-  old_level = intr_disable();
-
-  thread_update_priority(t);
-
-  if (t->status == THREAD_READY)
-  {
-    list_remove(&t->elem);
-    list_insert_ordered(&ready_list, &t->elem, cmp_thread_priority_reverse__thread, NULL);
-  }
-
-  intr_set_level(old_level);
-}
 void thread_set_nice(int nice)
 {
   struct thread *current_thread = thread_current();
@@ -544,7 +520,7 @@ init_thread(struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   t->original_priority = priority;
-  t->current_lock = NULL;
+  t->current_waiting_lock = NULL;
   list_init(&t->holding_locks);
   old_level = intr_disable();
   list_insert_ordered(&all_list, &t->allelem, (list_less_func *)&thread_cmp_priority, NULL);

@@ -24,7 +24,7 @@ struct lock
     struct semaphore semaphore; /* Binary semaphore controlling access. */
     
     /* Members for project1 mission2 priority donate */
-    int max_holder_priority;
+    int max_priority;
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;      /* List element. */
