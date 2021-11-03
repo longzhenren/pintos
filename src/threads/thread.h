@@ -96,7 +96,7 @@ struct thread
 
   /* Members for project1 mission2 priority donate */
   int original_priority;
-  struct lock *current_lock;
+  struct lock *current_waiting_lock;
   struct list holding_locks;
 
   /* Members for project1 mission3 mlfqs */
@@ -154,7 +154,6 @@ int thread_get_load_avg(void);
 void blocked_thread_check(struct thread *t, void *aux UNUSED);
 
 void thread_update_priority(struct thread *t);
-void thread_donate_priority(struct thread *t);
 
 void thread_mlfqs_update_load_avg_and_recent_cpu(void);
 void thread_mlfqs_update_priority(struct thread *t);
