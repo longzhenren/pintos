@@ -558,14 +558,6 @@ void thread_mlfqs_increase_recent_cpu_by_one(void)
     return;
   current_thread->recent_cpu = IADD(current_thread->recent_cpu, 1);
 }
-/* Every per second to refresh load_avg and recent_cpu of all threads. */
-size_t thread_mlfqs_count_ready_threads(void)
-{
-  size_t ready_threads = list_size(&ready_list);
-  if (thread_current() != idle_thread)
-    ready_threads++;
-  return ready_threads;
-}
 
 void thread_mlfqs_update_load_avg_and_recent_cpu(void)
 {
