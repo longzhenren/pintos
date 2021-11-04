@@ -101,6 +101,10 @@ void thread_init(void)
   init_thread(initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid();
+
+  if (thread_mlfqs){
+    thread_update_priority_mlfqs(initial_thread);
+  }
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -126,6 +130,9 @@ void thread_tick(void)
 {
   struct thread *t = thread_current();
 
+  if (t != idle_thread)
+    t->recent_cpu = IADD(t->recent_cpu, 1);
+
   /* Update statistics. */
   if (t == idle_thread)
     idle_ticks++;
@@ -135,27 +142,24 @@ void thread_tick(void)
 #endif
   else
     kernel_ticks++;
-  if (thread_mlfqs)
-  {
-    if (timer_ticks() % 4 == 0)
-    {
-      thread_foreach(&thread_update_priority_mlfqs, NULL);
-      list_sort(&ready_list, &thread_cmp_priority, NULL);
-      intr_yield_on_return();
-    }
-    if (timer_ticks() % TIMER_FREQ == 0)
-    {
-      // load_avg = (59/60)*load_avg + (1/60)*ready_threads */
-      thread_update_load_avg();
-      thread_foreach(&thread_update_recent_cpu_mlfqs, NULL);
-    }
-  }
-  else
+  if (!thread_mlfqs)
   {
     /* Enforce preemption. */
     if (++thread_ticks >= TIME_SLICE)
       intr_yield_on_return();
-    // return;
+    return;
+  }
+  if (timer_ticks() % 4 == 0)
+  {
+    thread_foreach(&thread_update_priority_mlfqs, NULL);
+    list_sort(&ready_list, &thread_cmp_priority, NULL);
+    intr_yield_on_return();
+  }
+  if (timer_ticks() % TIMER_FREQ == 0)
+  {
+    // load_avg = (59/60)*load_avg + (1/60)*ready_threads */
+    thread_update_load_avg();
+    thread_foreach(&thread_update_recent_cpu_mlfqs, NULL);
   }
 }
 
@@ -201,6 +205,13 @@ tid_t thread_create(const char *name, int priority,
   /* Initialize thread. */
   init_thread(t, name, priority);
   tid = t->tid = allocate_tid();
+
+  if (thread_mlfqs)
+  {
+    t->recent_cpu = thread_current()->recent_cpu;
+    t->nice = thread_get_nice();
+    thread_update_priority_mlfqs(t);
+  }
 
   /* Prepare thread for first run by initializing its stack.
      Do this atomically so intermediate values for the 'stack' 
@@ -664,8 +675,6 @@ uint32_t thread_stack_ofs = offsetof(struct thread, stack);
 
 void thread_update_recent_cpu_mlfqs(struct thread *t)
 {
-  ASSERT(thread_mlfqs);
-
   if (t == idle_thread)
     return;
   t->recent_cpu = IADD(MUL(DIV(IMUL(load_avg, 2), IADD(IMUL(load_avg, 2), 1)), t->recent_cpu), t->nice);
@@ -673,9 +682,9 @@ void thread_update_recent_cpu_mlfqs(struct thread *t)
 
 void thread_update_load_avg(void)
 {
-  ASSERT(thread_mlfqs);
-
+  // load_avg = (59/60)*load_avg + (1/60)*ready_threads
   load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(ready_threads_count(thread_current())), 60));
+  // load_avg = ADD(IMUL(load_avg, IDIV(CONST(59), 60)), IDIV(CONST(ready_threads_count(thread_current())), 60));
 }
 
 fp_t ready_threads_count(struct thread *t)
@@ -690,6 +699,7 @@ void thread_update_priority_mlfqs(struct thread *t)
 {
   if (t == idle_thread)
     return;
+  // t->priority = PRI_MAX - ROUND(IADD(IDIV(t->recent_cpu, 4), (t->nice * 2)));
   t->priority = ROUND(SUB(SUB(CONST(PRI_MAX), IDIV(t->recent_cpu, 4)), IMUL(CONST(2), t->nice)));
   if (t->priority > PRI_MAX)
     t->priority = PRI_MAX;
