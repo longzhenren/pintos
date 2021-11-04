@@ -225,13 +225,12 @@ void lock_acquire(struct lock *lock)
     if (lock->holder != NULL)
     {
       // 设置线程当前等待的锁
-      cur->current_waiting_lock = lock;
-      tmp_lock = lock;
+      cur->current_waiting_lock = tmp_lock = lock;
 
       // 递归捐赠，只要当前线程的优先级比锁记录的最大优先级大，就要捐赠，此处要维护好锁的最大优先级
       // 比如 H->M->L，锁最大优先级要设为 H，同时提升 M 和 L 优先级
       while (tmp_lock != NULL && 
-              cur->priority > tmp_lock->max_priority)
+              tmp_lock->max_priority < cur->priority)
       {
         tmp_lock->max_priority = cur->priority;
 
