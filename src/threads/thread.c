@@ -384,7 +384,9 @@ void thread_set_priority(int new_priority)
   cur->original_priority = new_priority;
 
   // 没有持有锁或者新的优先级比当前优先级高，那就重设线程优先级并重新调度
-  if (list_empty(&cur->holding_locks) || new_priority > cur->priority)
+  // 我们需要保持线程优先级为被捐赠优先级和实际优先级中的最大值，即 max(donate, original)，这样才符合优先级捐赠部分的要求
+  if (list_empty(&cur->holding_locks) || 
+      new_priority > cur->priority)
   {
     cur->priority = new_priority;
     thread_yield();
@@ -407,7 +409,6 @@ bool cmp_lock_max_priority__thread(const struct list_elem *a, const struct list_
 
 void thread_update_priority(struct thread *t)
 {
-  struct list_elem *max_priority_lock;
   int max_priority = t->original_priority;
   int max_lock_priority;
 
@@ -415,14 +416,12 @@ void thread_update_priority(struct thread *t)
   if (!list_empty(&t->holding_locks))
   {
     // 找到持有锁中的最大优先级
-    max_priority_lock = list_max(&t->holding_locks, cmp_lock_max_priority__thread, NULL);
-    max_lock_priority = list_entry(max_priority_lock, struct lock, elem)->max_priority;
+    max_lock_priority = list_entry(list_max(&t->holding_locks, cmp_lock_max_priority__thread, NULL), 
+                                  struct lock, elem)
+                                  ->max_priority;
 
     // 比当前（即原来）的优先级大的话，那就设成找到的最大优先级
-    if (max_priority < max_lock_priority)
-    {
-      max_priority = max_lock_priority;
-    }
+    max_priority = max_priority < max_lock_priority ? max_lock_priority : max_priority;
   }
 
   t->priority = max_priority;
