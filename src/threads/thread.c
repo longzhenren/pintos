@@ -370,35 +370,6 @@ void thread_foreach(thread_action_func *func, void *aux)
   }
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
-void thread_set_priority(int new_priority)
-{
-  // thread_current ()->priority = new_priority;
-
-  if (thread_mlfqs)
-    return;
-
-  struct thread *cur = thread_current();
-
-  // 先设一下原来的优先级
-  cur->original_priority = new_priority;
-
-  // 没有持有锁或者新的优先级比当前优先级高，那就重设线程优先级并重新调度
-  // 我们需要保持线程优先级为被捐赠优先级和实际优先级中的最大值，即 max(donate, original)，这样才符合优先级捐赠部分的要求
-  if (list_empty(&cur->holding_locks) || 
-      new_priority > cur->priority)
-  {
-    cur->priority = new_priority;
-    thread_yield();
-  }
-}
-
-/* Returns the current thread's priority. */
-int thread_get_priority(void)
-{
-  return thread_current()->priority;
-}
-
 bool cmp_lock_max_priority__thread(const struct list_elem *a, const struct list_elem *b, void *aux)
 {
   struct lock *lock_a = list_entry(a, struct lock, elem);
@@ -428,6 +399,35 @@ void thread_update_priority(struct thread *t)
 
   // 完了以后就更新一下就绪队列，确保优先级顺序
   list_sort(&ready_list, thread_cmp_priority, NULL);
+}
+
+/* Sets the current thread's priority to NEW_PRIORITY. */
+void thread_set_priority(int new_priority)
+{
+  // thread_current ()->priority = new_priority;
+
+  if (thread_mlfqs)
+    return;
+
+  struct thread *cur = thread_current();
+
+  // 先设一下原来的优先级
+  cur->original_priority = new_priority;
+
+  // 没有持有锁或者新的优先级比当前优先级高，那就重设线程优先级并重新调度
+  // 我们需要保持线程优先级为被捐赠优先级和实际优先级中的最大值，即 max(donate, original)，这样才符合优先级捐赠部分的要求
+  if (list_empty(&cur->holding_locks) || 
+      new_priority > cur->priority)
+  {
+    thread_update_priority(cur);
+    thread_yield();
+  }
+}
+
+/* Returns the current thread's priority. */
+int thread_get_priority(void)
+{
+  return thread_current()->priority;
 }
 
 void thread_set_nice(int nice)
