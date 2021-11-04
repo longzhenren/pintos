@@ -139,13 +139,14 @@ void thread_tick(void)
   {
     if (timer_ticks() % TIMER_FREQ == 0)
     {
-      load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(ready_threads_count()), 60));
-      thread_foreach(&thread_calc_recent_cpu, NULL);
+      // load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(ready_threads_count(t)), 60));
+      thread_update_load_avg();
+      thread_foreach(&mlfqs_update_priority, NULL);
     }
     if (timer_ticks() % 4 == 0)
     {
-      thread_foreach(&thread_calc_priority, NULL);
-      list_sort(&ready_list, &thread_priority_cmp, NULL);
+      thread_foreach(&thread_update_priority_mlfqs, NULL);
+      list_sort(&ready_list, &thread_cmp_priority, NULL);
       intr_yield_on_return();
     }
   }
@@ -545,50 +546,6 @@ init_thread(struct thread *t, const char *name, int priority)
   t->nice = 0;
   t->recent_cpu = 0;
 }
-// zzb
-/* Increase recent_cpu by 1. */
-void thread_mlfqs_increase_recent_cpu_by_one(void)
-{
-  ASSERT(thread_mlfqs);
-  ASSERT(intr_context());
-
-  struct thread *current_thread = thread_current();
-  if (current_thread == idle_thread)
-    return;
-  current_thread->recent_cpu = IADD(current_thread->recent_cpu, 1);
-}
-
-void thread_mlfqs_update_recent_cpu(void)
-{
-  ASSERT(thread_mlfqs);
-  ASSERT(intr_context());
-  
-  struct thread *t;
-  struct list_elem *e = list_begin(&all_list);
-  for (; e != list_end(&all_list); e = list_next(e))
-  {
-    t = list_entry(e, struct thread, allelem);
-    if (t != idle_thread)
-    {
-      t->recent_cpu = IADD(MUL(DIV(IMUL(load_avg, 2), IADD(IMUL(load_avg, 2), 1)), t->recent_cpu), t->nice);
-      thread_mlfqs_update_priority(t);
-    }
-  }
-}
-/* Update priority. */
-void thread_mlfqs_update_priority(struct thread *t)
-{
-  if (t == idle_thread)
-    return;
-
-  ASSERT(thread_mlfqs);
-  ASSERT(t != idle_thread);
-
-  t->priority = INT(ISUB(SUB(CONST(PRI_MAX), IDIV(t->recent_cpu, 4)), 2 * t->nice));
-  t->priority = t->priority < PRI_MIN ? PRI_MIN : t->priority;
-  t->priority = t->priority > PRI_MAX ? PRI_MAX : t->priority;
-}
-
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
    returns a pointer to the frame's base. */
 static void *
@@ -702,6 +659,31 @@ allocate_tid(void)
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
 
+// zzb
+void mlfqs_update_recent_cpu(struct thread *t)
+{
+  ASSERT(thread_mlfqs);
+  ASSERT(intr_context());
+
+  if (t == idle_thread)
+    return;
+
+  t->recent_cpu = IADD(MUL(DIV(IMUL(load_avg, 2), IADD(IMUL(load_avg, 2), 1)), t->recent_cpu), t->nice);
+}
+/* Update priority. */
+void mlfqs_update_priority(struct thread *t)
+{
+  ASSERT(thread_mlfqs);
+  ASSERT(t != idle_thread);
+
+  if (t == idle_thread)
+    return;
+
+  t->priority = INT(ISUB(SUB(CONST(PRI_MAX), IDIV(t->recent_cpu, 4)), 2 * t->nice));
+  t->priority = t->priority < PRI_MIN ? PRI_MIN : t->priority;
+  t->priority = t->priority > PRI_MAX ? PRI_MAX : t->priority;
+}
+
 void thread_add_recent_cpu(struct thread *t)
 {
   if (t == idle_thread)
@@ -734,7 +716,10 @@ void thread_update_priority_mlfqs(struct thread *t)
   if (t == idle_thread)
     return;
   t->priority = ROUND(SUB(SUB(CONST(PRI_MAX), IDIV(t->recent_cpu, 4)), IMUL(CONST(2), t->nice)));
-  t->priority = MAX(MIN(PRI_MAX, t->priority), PRI_MIN);
+  if (t->priority > PRI_MAX)
+    t->priority = PRI_MAX;
+  if (t->priority < PRI_MIN)
+    t->priority = PRI_MIN;
 }
 
 void blocked_thread_check(struct thread *t, void *aux UNUSED)

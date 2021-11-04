@@ -15,7 +15,4 @@ typedef int fp_t;
 #define CONST(A) ((fp_t)(A << 14))
 #define ROUND(A) (A >= 0 ? ((A + (1 << (14)) / 2) >> 14) : ((A - (1 << (14)) / 2) >> 14))
 
-#define MAX(a, b) (((a) > (b)) ? (a) : (b))
-#define MIN(a, b) (((a) > (b)) ? (b) : (a))
-
 #endif
