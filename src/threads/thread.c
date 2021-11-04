@@ -378,6 +378,7 @@ bool cmp_lock_max_priority__thread(const struct list_elem *a, const struct list_
   return lock_a->max_priority < lock_b->max_priority;
 }
 
+// 更新优先级，并确保线程优先级顺序
 void thread_update_priority(struct thread *t)
 {
   int max_priority = t->original_priority;
