@@ -135,10 +135,28 @@ void thread_tick(void)
 #endif
   else
     kernel_ticks++;
-
-  /* Enforce preemption. */
-  if (++thread_ticks >= TIME_SLICE)
-    intr_yield_on_return();
+  if (thread_mlfqs)
+  {
+    if (timer_ticks() % TIMER_FREQ == 0)
+    {
+      thread_foreach(&thread_calc_recent_cpu, NULL);
+      load_avg = fp_add(tmp3, tmp5);
+      thread_mlfqs_update_priority(thread_current());
+    }
+    if (timer_ticks() % 4 == 0)
+    {
+      thread_foreach(&thread_calc_priority, NULL);
+      list_sort(&ready_list, &thread_priority_cmp, NULL);
+      intr_yield_on_return();
+    }
+  }
+  else
+  {
+    /* Enforce preemption. */
+    if (++thread_ticks >= TIME_SLICE)
+      intr_yield_on_return();
+    return;
+  }
 }
 
 /* Prints thread statistics. */
@@ -714,7 +732,7 @@ void thread_update_load_avg(void)
   load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(thread_ready_count(thread_current())), 60));
 }
 
-fp_t thread_ready_count(struct thread *t)
+fp_t ready_threads_count(struct thread *t)
 {
   fp_t ready_thread = list_size(&ready_list);
   if (t != idle_thread)

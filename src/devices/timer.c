@@ -170,14 +170,6 @@ timer_interrupt(struct intr_frame *args UNUSED)
   thread_foreach(blocked_thread_check, NULL); // Check blocked threads
   thread_tick();
   intr_set_level(old_level); // Recover respond to external interrupt
-  if (thread_mlfqs)
-  {
-    thread_mlfqs_increase_recent_cpu_by_one();
-    if (ticks % TIMER_FREQ == 0)
-      thread_mlfqs_update_load_avg_and_recent_cpu();
-    else if (ticks % 4 == 0)
-      thread_mlfqs_update_priority(thread_current());
-  }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
