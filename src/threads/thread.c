@@ -139,9 +139,8 @@ void thread_tick(void)
   {
     if (timer_ticks() % TIMER_FREQ == 0)
     {
+      load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(ready_threads_count()), 60));
       thread_foreach(&thread_calc_recent_cpu, NULL);
-      load_avg = fp_add(tmp3, tmp5);
-      thread_mlfqs_update_priority(thread_current());
     }
     if (timer_ticks() % 4 == 0)
     {
@@ -559,13 +558,11 @@ void thread_mlfqs_increase_recent_cpu_by_one(void)
   current_thread->recent_cpu = IADD(current_thread->recent_cpu, 1);
 }
 
-void thread_mlfqs_update_load_avg_and_recent_cpu(void)
+void thread_mlfqs_update_recent_cpu(void)
 {
   ASSERT(thread_mlfqs);
   ASSERT(intr_context());
-  size_t ready_threads_cnt = thread_mlfqs_count_ready_threads();
-  load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(ready_threads_cnt), 60));
-
+  
   struct thread *t;
   struct list_elem *e = list_begin(&all_list);
   for (; e != list_end(&all_list); e = list_next(e))
