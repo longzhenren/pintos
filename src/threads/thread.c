@@ -147,7 +147,7 @@ void thread_tick(void)
     {
       // load_avg = (59/60)*load_avg + (1/60)*ready_threads */
       thread_update_load_avg();
-      thread_foreach(&thread_update_recent_cpu, NULL);
+      thread_foreach(&thread_update_recent_cpu_mlfqs, NULL);
     }
   }
   else
@@ -662,20 +662,10 @@ allocate_tid(void)
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
 
-// zzb
-void mlfqs_update_recent_cpu(struct thread *t)
+void thread_update_recent_cpu_mlfqs(struct thread *t)
 {
   ASSERT(thread_mlfqs);
-  ASSERT(intr_context());
 
-  if (t == idle_thread)
-    return;
-
-  t->recent_cpu = IADD(MUL(DIV(IMUL(load_avg, 2), IADD(IMUL(load_avg, 2), 1)), t->recent_cpu), t->nice);
-}
-
-void thread_update_recent_cpu(struct thread *t)
-{
   if (t == idle_thread)
     return;
   t->recent_cpu = IADD(MUL(DIV(IMUL(load_avg, 2), IADD(IMUL(load_avg, 2), 1)), t->recent_cpu), t->nice);

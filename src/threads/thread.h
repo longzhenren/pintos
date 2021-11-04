@@ -155,12 +155,10 @@ void blocked_thread_check(struct thread *t, void *aux UNUSED);
 
 void thread_update_priority(struct thread *t);
 
-void thread_mlfqs_update_load_avg_and_recent_cpu(void);
-void thread_mlfqs_update_priority(struct thread *t);
-void thread_mlfqs_increase_recent_cpu_by_one(void);
-void thread_add_recent_cpu(struct thread *t);
-void thread_update_recent_cpu(struct thread *t);
-void thread_update_load_avg(void);
 void thread_update_priority_mlfqs(struct thread *t);
+void thread_update_load_avg(void);
+void thread_update_recent_cpu_mlfqs(struct thread *t);
+fp_t ready_threads_count(struct thread *t);
+
 
 #endif /* threads/thread.h */
