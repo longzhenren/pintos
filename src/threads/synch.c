@@ -247,16 +247,21 @@ void lock_acquire(struct lock *lock)
   // P 操作，锁被其它线程持有时，当前线程就会阻塞
   sema_down(&lock->semaphore);
 
-  lock->holder = thread_current();
+  // P 操作过了，然后线程持有锁
+  cur = thread_current();
+
+  lock->holder = cur;
 
   if (!thread_mlfqs)
   {
     // 终于持有了锁，于是把当前等待锁设为空
-    thread_current()->current_waiting_lock = NULL;
+    cur->current_waiting_lock = NULL;
+
     // 把锁加到线程持有锁列表里
-    list_push_back(&thread_current()->holding_locks, &lock->elem);
+    list_push_back(&cur->holding_locks, &lock->elem);
+    
     // 更新一下自身优先级，防止出现锁的最大优先级比当前线程大的情况
-    thread_update_priority(thread_current());
+    thread_update_priority(cur);
   }
 }
 
