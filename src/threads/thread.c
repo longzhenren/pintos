@@ -675,7 +675,7 @@ void thread_update_load_avg(void)
 {
   ASSERT(thread_mlfqs);
 
-  load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(thread_ready_count(thread_current())), 60));
+  load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(ready_threads_count(thread_current())), 60));
 }
 
 fp_t ready_threads_count(struct thread *t)
