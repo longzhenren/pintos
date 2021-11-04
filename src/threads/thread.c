@@ -137,17 +137,17 @@ void thread_tick(void)
     kernel_ticks++;
   if (thread_mlfqs)
   {
-    if (timer_ticks() % TIMER_FREQ == 0)
-    {
-      // load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(ready_threads_count(t)), 60));
-      thread_update_load_avg();
-      thread_foreach(&mlfqs_update_priority, NULL);
-    }
     if (timer_ticks() % 4 == 0)
     {
       thread_foreach(&thread_update_priority_mlfqs, NULL);
       list_sort(&ready_list, &thread_cmp_priority, NULL);
       intr_yield_on_return();
+    }
+    if (timer_ticks() % TIMER_FREQ == 0)
+    {
+      // load_avg = (59/60)*load_avg + (1/60)*ready_threads */
+      thread_update_load_avg();
+      thread_foreach(&thread_update_recent_cpu, NULL);
     }
   }
   else
@@ -155,7 +155,7 @@ void thread_tick(void)
     /* Enforce preemption. */
     if (++thread_ticks >= TIME_SLICE)
       intr_yield_on_return();
-    return;
+    // return;
   }
 }
 
@@ -422,9 +422,12 @@ void thread_update_priority(struct thread *t)
 
 void thread_set_nice(int nice)
 {
-  struct thread *current_thread = thread_current();
-  current_thread->nice = nice;
-  thread_update_priority(current_thread);
+  ASSERT(nice >= -20 && nice <= 20);
+  ASSERT(thread_mlfqs);
+
+  struct thread *t = thread_current();
+  t->nice = nice;
+  thread_update_priority_mlfqs(t);
   thread_yield();
 }
 
@@ -670,26 +673,6 @@ void mlfqs_update_recent_cpu(struct thread *t)
 
   t->recent_cpu = IADD(MUL(DIV(IMUL(load_avg, 2), IADD(IMUL(load_avg, 2), 1)), t->recent_cpu), t->nice);
 }
-/* Update priority. */
-void mlfqs_update_priority(struct thread *t)
-{
-  ASSERT(thread_mlfqs);
-  ASSERT(t != idle_thread);
-
-  if (t == idle_thread)
-    return;
-
-  t->priority = INT(ISUB(SUB(CONST(PRI_MAX), IDIV(t->recent_cpu, 4)), 2 * t->nice));
-  t->priority = t->priority < PRI_MIN ? PRI_MIN : t->priority;
-  t->priority = t->priority > PRI_MAX ? PRI_MAX : t->priority;
-}
-
-void thread_add_recent_cpu(struct thread *t)
-{
-  if (t == idle_thread)
-    return;
-  t->recent_cpu = IADD(t->recent_cpu, 1);
-}
 
 void thread_update_recent_cpu(struct thread *t)
 {
@@ -700,6 +683,8 @@ void thread_update_recent_cpu(struct thread *t)
 
 void thread_update_load_avg(void)
 {
+  ASSERT(thread_mlfqs);
+
   load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(thread_ready_count(thread_current())), 60));
 }
 
