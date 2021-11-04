@@ -234,7 +234,7 @@ void lock_acquire(struct lock *lock)
       {
         tmp_lock->max_priority = cur->priority;
 
-        // 更新优先级，即优先级捐赠，其中包含了重新调度的过程
+        // 更新优先级，即优先级捐赠，其中保证了一个优先级的顺序
         thread_update_priority(tmp_lock->holder);
 
         // 下一个锁，在 H->M->L 中，就是 M 申请 L 持有的锁
