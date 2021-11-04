@@ -102,7 +102,9 @@ void thread_init(void)
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid();
 
-  if (thread_mlfqs){
+  /* M3: Update priority in mlfqs when initializing a new thread */
+  if (thread_mlfqs)
+  {
     thread_update_priority_mlfqs(initial_thread);
   }
 }
@@ -142,24 +144,28 @@ void thread_tick(void)
 #endif
   else
     kernel_ticks++;
-  if (!thread_mlfqs)
+  if (thread_mlfqs)
+  {
+    /* re-schedule every 4 ticks (a time slice) */
+    if (timer_ticks() % 4 == 0)
+    {
+      thread_foreach(&thread_update_priority_mlfqs, NULL);
+      list_sort(&ready_list, &thread_cmp_priority, NULL);
+      intr_yield_on_return();
+    }
+    /* Update load_avg and recent_cpu globally */
+    if (timer_ticks() % TIMER_FREQ == 0)
+    {
+      // load_avg = (59/60)*load_avg + (1/60)*ready_threads */
+      thread_update_load_avg();
+      thread_foreach(&thread_update_recent_cpu_mlfqs, NULL);
+    }
+  }
+  else
   {
     /* Enforce preemption. */
     if (++thread_ticks >= TIME_SLICE)
       intr_yield_on_return();
-    return;
-  }
-  if (timer_ticks() % 4 == 0)
-  {
-    thread_foreach(&thread_update_priority_mlfqs, NULL);
-    list_sort(&ready_list, &thread_cmp_priority, NULL);
-    intr_yield_on_return();
-  }
-  if (timer_ticks() % TIMER_FREQ == 0)
-  {
-    // load_avg = (59/60)*load_avg + (1/60)*ready_threads */
-    thread_update_load_avg();
-    thread_foreach(&thread_update_recent_cpu_mlfqs, NULL);
   }
 }
 
@@ -206,6 +212,7 @@ tid_t thread_create(const char *name, int priority,
   init_thread(t, name, priority);
   tid = t->tid = allocate_tid();
 
+  /* For mlfqs, init a thread's attributes. */
   if (thread_mlfqs)
   {
     t->recent_cpu = thread_current()->recent_cpu;
@@ -388,9 +395,9 @@ void thread_update_priority(struct thread *t)
   if (!list_empty(&t->holding_locks))
   {
     // 找到持有锁中的最大优先级
-    max_lock_priority = list_entry(list_max(&t->holding_locks, cmp_lock_max_priority__thread, NULL), 
-                                  struct lock, elem)
-                                  ->max_priority;
+    max_lock_priority = list_entry(list_max(&t->holding_locks, cmp_lock_max_priority__thread, NULL),
+                                   struct lock, elem)
+                            ->max_priority;
 
     // 比当前（即原来）的优先级大的话，那就设成找到的最大优先级
     max_priority = max_priority < max_lock_priority ? max_lock_priority : max_priority;
@@ -417,7 +424,7 @@ void thread_set_priority(int new_priority)
 
   // 没有持有锁或者新的优先级比当前优先级高，那就重设线程优先级并重新调度
   // 我们需要保持线程优先级为被捐赠优先级和实际优先级中的最大值，即 max(donate, original)，这样才符合优先级捐赠部分的要求
-  if (list_empty(&cur->holding_locks) || 
+  if (list_empty(&cur->holding_locks) ||
       new_priority > cur->priority)
   {
     thread_update_priority(cur);
@@ -699,7 +706,6 @@ void thread_update_priority_mlfqs(struct thread *t)
 {
   if (t == idle_thread)
     return;
-  // t->priority = PRI_MAX - ROUND(IADD(IDIV(t->recent_cpu, 4), (t->nice * 2)));
   t->priority = ROUND(SUB(SUB(CONST(PRI_MAX), IDIV(t->recent_cpu, 4)), IMUL(CONST(2), t->nice)));
   if (t->priority > PRI_MAX)
     t->priority = PRI_MAX;

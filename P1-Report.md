@@ -17,7 +17,7 @@
 
 ### Git 相关
 
-[Pintos 的 Git 项目地址]()
+[Pintos 的 Git 项目地址](https://gitee.com/buaa-os/os)
 
 ### 参考资料
 
@@ -103,7 +103,16 @@
 > C1: Copy here the declaration of each new or changed `struct` or `struct` member, global or static variable, `typedef`, or enumeration. Identify the purpose of each in 25 words or less.
 >
 > ```c
+> /* thread.h */
+> struct thread
+> {
+>   /* Members for project1 mission3 mlfqs */
+>   int nice;        /* Nice Value in MLFQS. */
+>   fp_t recent_cpu; /* Recent CPU Value. */
+> };
 > 
+> /* thread.c */
+> fp_t load_avg; /* loag_avg Value of the whole system. */
 > ```
 
 ### ALGORITHMS
