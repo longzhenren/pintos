@@ -370,8 +370,8 @@ bool cmp_cond_semaphore_thread_priority__synch(const struct list_elem *a, const 
   // 这样就使和信号量有关的线程能够分开处理（唤醒）
   struct semaphore_elem *semaphore_a = list_entry(a, struct semaphore_elem, elem);
   struct semaphore_elem *semaphore_b = list_entry(b, struct semaphore_elem, elem);
-  struct thread *thread_a = list_entry(list_front(&semaphore_a->semaphore.waiters), struct thread, elem);
-  struct thread *thread_b = list_entry(list_front(&semaphore_b->semaphore.waiters), struct thread, elem);
+  struct thread *thread_a = list_entry(list_max(&semaphore_a->semaphore.waiters, cmp_thread_priority__synch, NULL), struct thread, elem);
+  struct thread *thread_b = list_entry(list_max(&semaphore_b->semaphore.waiters, cmp_thread_priority__synch, NULL), struct thread, elem);
 
   return thread_a->priority < thread_b->priority;
 }
