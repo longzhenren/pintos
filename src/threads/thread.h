@@ -159,6 +159,6 @@ void thread_update_priority_mlfqs(struct thread *t);
 void thread_update_load_avg(void);
 void thread_update_recent_cpu_mlfqs(struct thread *t);
 fp_t ready_threads_count(struct thread *t);
-
+bool thread_cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 
 #endif /* threads/thread.h */
