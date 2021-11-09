@@ -106,9 +106,9 @@
 > /* thread.h */
 > struct thread
 > {
->   /* Members for project1 mission3 mlfqs */
->   int nice;        /* Nice Value in MLFQS. */
->   fp_t recent_cpu; /* Recent CPU Value. */
+> /* Members for project1 mission3 mlfqs */
+> int nice;        /* Nice Value in MLFQS. */
+> fp_t recent_cpu; /* Recent CPU Value. */
 > };
 > 
 > /* thread.c */
@@ -121,22 +121,41 @@
 
 | timer ticks | `recent_cpu` A | `recent_cpu` B | `recent_cpu` C | `priority` A | `priority` B | `priority` C | thread to run |
 | ----------- | -------------- | -------------- | -------------- | ------------ | ------------ | ------------ | ------------- |
-| 0           | 0.00           | 0.00           | 0.00           | 63.00        | 61.00        | 59.00        | A             |
-| 4           | 4.00           | 1.00           | 2.00           | 62.00        | 60.75        | 58.50        | A             |
-| 8           | 8.00           | 1.00           | 2.00           | 61.00        | 60.75        | 58.50        | A             |
-| 12          | 12.00          | 1.00           | 2.00           | 60.00        | 60.75        | 58.50        | B             |
-| 16          | 12.00          | 5.00           | 2.00           | 60.00        | 59.75        | 58.50        | A             |
-| 20          | 2.36           | 1.45           | 2.18           | 62.40        | 60.63        | 58.45        | A             |
-| 24          | 6.36           | 1.45           | 2.18           | 61.40        | 60.63        | 58.45        | A             |
-| 28          | 10.36          | 1.45           | 2.18           | 60.40        | 60.63        | 58.45        | B             |
-| 32          | 10.36          | 5.45           | 2.18           | 60.40        | 59.63        | 58.45        | A             |
-| 36          | 14.36          | 5.45           | 2.18           | 59.40        | 59.63        | 58.45        | B             |
+| 0           | 0              | 1              | 2              | 63           | 61           | 59           | A             |
+| 4           | 4              | 1              | 2              | 62           | 61           | 59           | A             |
+| 8           | 8              | 1              | 2              | 61           | 61           | 59           | B             |
+| 12          | 8              | 5              | 2              | 61           | 60           | 59           | A             |
+| 16          | 12             | 5              | 2              | 60           | 60           | 59           | B             |
+| 20          | 12             | 9              | 2              | 60           | 59           | 59           | A             |
+| 24          | 16             | 9              | 2              | 59           | 59           | 59           | C             |
+| 24          | 16             | 9              | 6              | 59           | 59           | 58           | B             |
+| 32          | 16             | 13             | 6              | 59           | 58           | 58           | A             |
+| 36          | 20             | 13             | 6              | 58           | 58           | 58           | C             |
 
 > C3: Did any ambiguities in the scheduler specification make values in the table uncertain? If so, what rule did you use to resolve them? Does this match the behavior of your scheduler?
+
+由于在浮点数运算的Round（实数舍入到整数）的过程中采取了以下的实现方式：
+
+```c
+#define ROUND(A) (A >= 0 ? ((A + (1 << (14)) / 2) >> 14) : ((A - (1 << (14)) / 2) >> 14))
+t->priority = ROUND(SUB(SUB(CONST(PRI_MAX), IDIV(t->recent_cpu, 4)), IMUL(CONST(2), t->nice)));
+```
+
+因此可能存在两个不同的priority经过舍入后，仅保留整数部分，造成优先级的相同的现象。
+
+另外由于我们采取的实现方式是：在任务三高级调度中的所有更改和运算最终都都体现到线程的priority属性上，并依靠任务2中已经实现的优先级调度方式进行处理，即动态修改等待队列中的全部线程的优先级顺序，并重新进行调度。因此在更改优先级之后，可能出现原来的优先级不同、经过高级调度之后优先级相同的现象，导致了算法结果的不确定性。
+
+由于使用了任务二中实现的线程队列，因此对于相同优先级的调度，执行顺序依赖于线程队列的实现算法，即将线程推进就绪队列中，根据优先级队列的特性，先进入的进程会先被执行，因此就可能出现先进入的优先级为54.5的线程比后进入的优先级为55.2的线程先执行的情况发生。
+
+此外，由于计算recent_cpu、 load_avg、priority的时间不能确定，导致我们认为的ticks略大于实际的ticks，可能会导致不确定性。
 
 > C4: How is the way you divided the cost of scheduling between code inside and outside interrupt context likely to affect performance?
 
 ### RATIONALE
 
 > C5: Briefly critique your design, pointing out advantages and disadvantages in your design choices. If you were to have extra time to work on this part of the project, how might you choose to refine or improve your design?
+
+系统内置了基于时钟的中断处理函数以及使用链表方式实现的线程队列和相关的系统函数。基于这些的方式进行实现。优点是思路相对简洁，编写代码相对简单，缺点是调度方式不够精确，占用系统资源相对较多，且对于中断处理的相关细节了解不够深入。
+
+在本次任务中，由于作为课程配套设计，我们以“通过全部测试点”为驱动进行编写，只要测试点通过，那么就假定我们的实现是正确且合理的。如果有更加充足的时间，我们会尝试更多的调度方式，比如修改内核，新建专门的调度进程、对于各个不同的优先级创建单独的就绪队列等方式，提高系统的效率和结构性。
 
