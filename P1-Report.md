@@ -34,6 +34,7 @@
 
 1. [Pintos Guide by  Stephen Tsung-Han Sher, Indiana University Bloomington](https://static1.squarespace.com/static/5b18aa0955b02c1de94e4412/t/5b85fad2f950b7b16b7a2ed6/1535507195196/Pintos+Guide)
 2. [Official Pintos documentation](https://web.stanford.edu/class/cs140/projects/pintos/pintos_1.html)
+2. [Kaist's gitbook](https://casys-kaist.github.io/pintos-kaistl)
 
 ## 实验要求
 
@@ -51,6 +52,10 @@
 
 在实验过程中，实现线程优先级捐赠，重点是要解决多次捐赠和递归捐赠的问题。
 
+### Mission3
+
+在实验过程中，实现一个类似于4.4BSD调度器的多级反馈队列调度器，以减少系统上运行作业的平均响应时间
+
 ## 需求分析
 
 ### Mission1
@@ -59,11 +64,17 @@
 
 ### Mission2.1
 
-在实验过程中，实现线程优先队列，并解决线程生命周期中的优先级排序问题。
+设计排序算法保证每次线程有序地插入list中、保证线程能够正确地交出权限。在实验过程中，实现线程优先队列，并解决线程生命周期中的优先级排序问题。
 
 ### Mission2.2
 
 在实验过程中，实现线程优先级捐赠，重点是要解决多次捐赠和递归捐赠的问题。
+
+### Mission3
+
+平衡线程的不同调度需求，根据recent_cpu、等若干参数，来更新线程的priority，使得线程以更合理的方式先后执行。
+
+在实验过程中，需要实现一个类似于4.4BSD调度器的多级反馈队列调度器（MLFQS），以减少系统上运行作业的平均响应时间。
 
 ## 设计思路
 
@@ -85,11 +96,17 @@
 
 在初步分析了优先级捐赠的过程后，我们可以发现线程优先级的更新是一个重要的过程，可以将其单独写出一个函数。针对优先级恢复的要求，可以想到必须要保留线程优先级被捐赠之前的优先级，否则就不能恢复了；针对多次捐赠的要求，即当线程持有多个锁时，需要将线程的优先级设置为其被捐赠的优先级中最大的，可以想到必须要记录线程目前持有的锁以及被捐赠的优先级，而自然地，被捐赠的优先级可以和锁进行绑定，当要查找被捐赠的优先级中最大的优先级时，只要找线程持有的锁关联的被捐赠的优先级即可；针对递归捐赠的要求，可以想到必须要记录线程要申请的，即将要持有的锁，通过将要持有的锁，获取到它的 `holder`，即当前持有它的线程，才能形成一个优先级捐赠链，更新锁关联的被捐赠的优先级。
 
+### Mission3
+
+首先，为了保证效率，pintos的内核不支持浮点数运算，只支持整数运算。实验文档中提供了一种用整形运算代替浮点型运算（17.14定点数）的方法。根据实验要求对代码进行扩展，编写一系列浮点运算相关操作。为了保证节约内存空间，使用宏定义的方式进行运算的处理。
+
+根据题意，我们需要在合适的时机实现定时动态更新recent_cpu、load_avg等值。
+
 ## 重难点讲解
 
 ### Mission1
 
-在实验中，阅读代码时发现，`timer_sleep`就是在传入函数的时间`ticks`内，如果线程处于运行状态就把该线程放入就绪队列中。也就是说线程不断在CPU就绪状态队列和运行状态之间来回，一直占用CPU的资源。
+在实验中，阅读代码时发现，`timer_sleep`就是在传入函数的时间`ticks`内，如果线程处于运行状态就把该线程放入就绪队列中。也就是说线程不断在CPU就绪状态队列和运行状态之间来回，一直占用CPU的资源。于是决定使用线程阻塞的方法来实现线程睡眠的方式，在时间片结束时不再对每一个thread进行轮询，而是将thread放入`block_list`中，每个时间片检查`block_list`中的线程是否到了唤醒的时间。如果thread没有到规定的唤醒时间，则等待下一次时间片的查询。若是已经到了规定的唤醒时间，那么就将该线程从`block_list`中取出，放入到`ready_list`当中。
 
 在实验过程中，比较复杂的就是阅读源代码，在实验过程中很多函数调用的非常复杂，其中有的函数通过阅读注解就可以轻易地理解函数的作用和返回结果，但是有的函数描述得并不清楚，需要对函数进行深入地解读。了解家源代码如何**屏蔽时钟中断**，如何**实现原子操作**，在重新实现的时候，如果有这些需要，可以仿照源代码的方式进行书写。
 
@@ -274,6 +291,128 @@ if (list_empty(&cur->holding_locks) ||
 
 这样，总体上线程优先级捐赠部分的实验任务就完成了。
 
+### Mission3
+
+定义核心算法函数
+
+```c
+// 更新指定线程的recent_cpu值
+void thread_update_recent_cpu_mlfqs(struct thread *t)
+{
+  if (t == idle_thread)
+    return;
+  t->recent_cpu = IADD(MUL(DIV(IMUL(load_avg, 2), IADD(IMUL(load_avg, 2), 1)), t->recent_cpu), t->nice);
+}
+// 更新当前系统的负载load_avg
+void thread_update_load_avg(void)
+{
+  // load_avg = (59/60)*load_avg + (1/60)*ready_threads
+  load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(ready_threads_count(thread_current())), 60));
+  // load_avg = ADD(IMUL(load_avg, IDIV(CONST(59), 60)), IDIV(CONST(ready_threads_count(thread_current())), 60));
+}
+
+// 更新当前就绪队列中正在排队的线程总数
+fp_t ready_threads_count(struct thread *t)
+{
+  fp_t ready_thread = list_size(&ready_list);
+  if (t != idle_thread)
+    ready_thread++;
+  return ready_thread;
+}
+
+// 更新指定线程的优先级
+void thread_update_priority_mlfqs(struct thread *t)
+{
+  if (t == idle_thread)
+    return;
+  t->priority = ROUND(SUB(SUB(CONST(PRI_MAX), IDIV(t->recent_cpu, 4)), IMUL(CONST(2), t->nice)));
+  if (t->priority > PRI_MAX)
+    t->priority = PRI_MAX;
+  if (t->priority < PRI_MIN)
+    t->priority = PRI_MIN;
+}
+
+```
+
+任务三的难点在于核心算法函数调用的时机，应该在何时更新哪些变量、调用那些函数，才能符合题目要求。
+
+- 依靠时钟中断，在`thread_tick`函数中调用，根据题目描述，每`TIMER_FREQ`个ticks更新一次负载和每个线程的recent_cpu值、每个时间片（4 ticks）更新一次全部线程的优先级并重新进行调度。
+
+```c
+/* Called by the timer interrupt handler at each timer tick.
+   Thus, this function runs in an external interrupt context. */
+void thread_tick(void)
+{
+  struct thread *t = thread_current();
+
+  if (t != idle_thread)
+    t->recent_cpu = IADD(t->recent_cpu, 1);
+
+  /* Update statistics. */
+  if (t == idle_thread)
+    idle_ticks++;
+#ifdef USERPROG
+  else if (t->pagedir != NULL)
+    user_ticks++;
+#endif
+  else
+    kernel_ticks++;
+  if (thread_mlfqs)
+  {
+    /* re-schedule every 4 ticks (a time slice) */
+    if (timer_ticks() % 4 == 0) //当前时间片（4 ticks）用完
+    {
+      thread_foreach(&thread_update_priority_mlfqs, NULL);// 对全部线程进行更新优先级操作
+      list_sort(&ready_list, &thread_cmp_priority, NULL);//维护等待队列，重新根据更新后的优先级进行排序
+      intr_yield_on_return();// 中断返回时，直接将当前进程推到就绪队列中
+    }
+    /* Update load_avg and recent_cpu globally */
+    if (timer_ticks() % TIMER_FREQ == 0)
+    {
+      // load_avg = (59/60)*load_avg + (1/60)*ready_threads */
+      thread_update_load_avg();// 更新系统负载
+      thread_foreach(&thread_update_recent_cpu_mlfqs, NULL);// 更新每个线程的recent_cpu值
+    }
+  }
+  else
+  {
+    /* Enforce preemption. */
+    if (++thread_ticks >= TIME_SLICE)
+      intr_yield_on_return();// 中断返回时，直接将当前进程推到就绪队列中
+  }
+}
+```
+
+- 在创建新线程时候，如果开启了高级调度，则在创建线程时进行一次优先级更新
+
+```c
+void thread_init(void)
+{
+  ......
+      
+  /* M3: Update priority in mlfqs when initializing a new thread */
+  if (thread_mlfqs)
+    thread_update_priority_mlfqs(initial_thread);
+}
+```
+
+- 在重新设定nice值的时候，对当前线程进行一次优先级更新
+
+```c
+void thread_set_nice(int nice)
+{
+  ASSERT(nice >= -20 && nice <= 20);
+  ASSERT(thread_mlfqs);
+
+  struct thread *t = thread_current();
+  t->nice = nice;
+  thread_update_priority_mlfqs(t);
+  thread_yield();
+}
+```
+
+
+
 ## 用户手册
 
 测试命令如下:
@@ -294,6 +433,8 @@ make check
 
 ### Student1
 
+**张智博：**在实验过程中我了解了pintos的基本代码架构和进行项目管理的基本要求。从现在看来，我们在项目的前期在沟通上存在一定的欠缺，导致走了一些弯路。另外我还发现我在Git的使用上还存在一些不足，多次误操作导致代码被覆盖。
+
 ### Student2
 
 **王彦婷**：在实验过程中阅读代码的时候发现，在函数中，会反复验证条件是不是符合，并且保证原子操作。在实验过程中加深了对于操作系统知识的理解，尤其是关于进程忙等待，阻塞等方面的知识。通过阅读代码，更加规范了写代码的风格。
@@ -307,6 +448,12 @@ make check
 **姜海洋**：在实验过程中，发现操作系统的内容十分繁琐且耦合性很高，锻炼了我在大量代码中搜寻所需函数的能力，而实现的过程中，维持优先级队列本不是什么很繁琐的需求，但因为一开始的实现方式过于繁琐导致绕了很多弯路。由此体会到在开始动手前大量思考规划出合理方案的必要性。
 
 ## 其他你认为有必要的内容 (Optional)
+
+- 在进行代码测试时请连接笔记本电脑的电源，否则可能因为一些玄学问题出现有测试点不通过的现象。
+
+
+
+
 
 # Project 1 Design Document
 
@@ -526,6 +673,8 @@ t->priority = ROUND(SUB(SUB(CONST(PRI_MAX), IDIV(t->recent_cpu, 4)), IMUL(CONST(
 此外，由于计算recent_cpu、 load_avg、priority的时间不能确定，导致我们认为的ticks略大于实际的ticks，可能会导致不确定性。
 
 > C4: How is the way you divided the cost of scheduling between code inside and outside interrupt context likely to affect performance?
+
+如果CPU在计算recent_cpu、load_avg和priority上花费了太多的时间，那么它会占用线程被调度之前的时间，使这个线程运行时间延长，导致优先级降低和提高系统负载，影响当前线程的调度情况，降低性能。同时不在内核中进行中断处理，避免了降低响应速度影响性能的情况发生。
 
 ### RATIONALE
 
