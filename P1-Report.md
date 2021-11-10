@@ -423,6 +423,8 @@ intr_set_level (old_level);
 
 > B7: Why did you choose this design? In what ways is it superior to another design you considered?
 
+考虑了更改结构体加入顺序次序变量，但由于每次更改都需更新整个队列中元素的次序，因而过于繁琐效率过低。而链表本身的顺序性使得只需要在更改时维持好元素的前后顺序就可以维持整个链表的有序性。
+
 ## QUESTION 3: ADVANCED SCHEDULER
 
 ### DATA STRUCTURES
