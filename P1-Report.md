@@ -209,8 +209,7 @@ struct lock *tmp_lock = lock;
 
 // 递归捐赠，只要当前线程的优先级比锁记录的最大优先级大，就要捐赠，此处要维护好锁记录的被捐赠优先级
 // 比如 H->M->L，锁最大优先级要设为 H，同时提升 M 和 L 优先级
-while (tmp_lock != NULL && 
-        tmp_lock->donated_priority < cur->priority)
+while (tmp_lock != NULL && tmp_lock->donated_priority < cur->priority)
 {
   // 优先级捐赠
   tmp_lock->donated_priority = cur->priority;
@@ -223,7 +222,55 @@ while (tmp_lock != NULL &&
 }
 ```
 
-这样，线程优先级捐赠的主要过程就大致完成了。之后考虑在 `lock_acquire()` 中 `sema_down()`，即P操作之后的运行逻辑。在P操作之后，表明当前线程不再被阻塞，成功获取到了要持有的锁，这从 `lock->holder = thread_current();` 中也可以看出。而持有了锁之后，那么线程自然就要记录这个持有的锁，并且之前设置的线程将要持有的锁 `desired_lock` 就要清空了，另外既然当前线程持有了锁，那么显然当前锁记录的最大优先级就应该设为当前线程的优先级，否则就不符合优先级调度的规则了。
+这样，线程优先级捐赠的主要过程就大致完成了。之后考虑在 `lock_acquire()` 中 `sema_down()`，即P操作之后的运行逻辑。在P操作之后，表明当前线程不再被阻塞，成功获取到了要持有的锁，这从 `lock->holder = thread_current();` 中也可以看出。而持有了锁之后，那么线程自然就要记录这个持有的锁，并且之前设置的线程将要持有的锁 `desired_lock` 就要清空了，最后就需要更新当前线程优先级，确保线程优先级正确，最终代码大致如下所示。
+
+```c++
+struct thread *cur = thread_current();
+
+// 把锁加到线程持有锁列表里
+list_push_back(&cur->holding_locks, &lock->elem);
+
+// 终于持有了锁，于是把当前将要持有的锁设为空
+cur->desired_lock = NULL;
+
+// 更新当前线程优先级
+thread_update_priority(cur);
+```
+
+之后考虑线程释放锁时优先级恢复的过程。当前线程释放锁，自然要把锁从持有的锁中移除，而锁在被移除后，它就和线程的优先级的调整和更新无关了，也就是说之前记录的被捐赠优先级就要重置成 `PRI_MIN`，然后优先级的恢复可以直接通过之前的优先级更新过程完成，因为它里面已经包含了对原来优先级和被捐赠优先级的综合更新逻辑，如下所示。
+
+```c++
+struct thread *cur = thread_current();
+
+// 将锁从持有锁列表中移除
+list_remove(&lock->elem);
+
+// 重置锁记录的被捐赠优先级
+lock->donated_priority = PRI_MIN;
+
+// 更新一下优先级
+thread_update_priority(cur);
+```
+
+再考虑线程优先级设置的过程。优先级设置过程在 `thread_set_priority()` 中，其原本是直接设置了线程优先级，这是不符合优先级调度的，所以首先，线程要将原来的优先级记录为新的优先级，以进行可能的优先级更新，若线程没有持有锁或新的优先级比线程当前的优先级大，那么自然就要更新线程当前的优先级，在持有锁且新优先级比当前的小时，我们是不能去修改线程的优先级的。而若成功设置了新的优先级，那么当前线程就要进行重新调度，确保优先级调度顺序的正确，如下所示。
+
+```c++
+struct thread *cur = thread_current();
+
+// 先设一下原来的优先级
+cur->original_priority = new_priority;
+
+// 没有持有锁或者新的优先级比当前优先级高，那就重设线程优先级并重新调度
+// 我们需要保持线程优先级为被捐赠优先级和实际优先级中的最大值，即 max(donated, original)，这样才符合优先级捐赠部分的要求
+if (list_empty(&cur->holding_locks) ||
+   new_priority > cur->priority)
+{
+ thread_update_priority(cur);
+ thread_yield();
+}
+```
+
+这样，总体上线程优先级捐赠部分的实验任务就完成了。
 
 ## 用户手册
 
