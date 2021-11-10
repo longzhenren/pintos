@@ -394,22 +394,23 @@ void thread_guard_priority_order(void)
 // 更新优先级，并确保线程优先级顺序
 void thread_update_priority(struct thread *t)
 {
-  int max_priority = t->original_priority;
-  int max_lock_priority;
+  int max_donated_priority;
 
   // 没有持有锁的话，那就直接更新成原来的优先级
   if (!list_empty(&t->holding_locks))
   {
     // 找到持有锁中的最大优先级
-    max_lock_priority = list_entry(list_max(&t->holding_locks, cmp_lock_donated_priority__thread, NULL),
+    max_donated_priority = list_entry(list_max(&t->holding_locks, cmp_lock_donated_priority__thread, NULL),
                                    struct lock, elem)
                             ->donated_priority;
 
-    // 比当前（即原来）的优先级大的话，那就设成找到的最大优先级
-    max_priority = max_priority < max_lock_priority ? max_lock_priority : max_priority;
+    // 比原来优先级大的话，那就设成找到的最大优先级
+    t->priority = t->original_priority < max_donated_priority ? max_donated_priority : t->original_priority;
   }
-
-  t->priority = max_priority;
+  else
+  {
+    t->priority = t->original_priority;
+  }
 
   // 完了以后就更新一下就绪队列，确保优先级顺序
   thread_guard_priority_order();

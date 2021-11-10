@@ -28,6 +28,7 @@ struct lock
     int donated_priority;
 
     /* Shared between thread.c and synch.c. */
+    // 这主要是为了锁能够添加到 thread->holding_locks 中
     struct list_elem elem;      /* List element. */
   };
 
