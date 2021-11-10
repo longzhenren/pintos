@@ -25,7 +25,7 @@ struct lock
     
     /* Members for project1 mission2 priority donate */
     // 锁记录的最大优先级，用于优先级捐赠
-    int max_priority;
+    int donated_priority;
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;      /* List element. */

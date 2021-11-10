@@ -196,7 +196,7 @@ void lock_init(struct lock *lock)
   lock->holder = NULL;
   sema_init(&lock->semaphore, 1);
 
-  lock->max_priority = PRI_MIN;
+  lock->donated_priority = PRI_MIN;
 }
 
 /* Acquires LOCK, sleeping until it becomes available if
@@ -230,9 +230,9 @@ void lock_acquire(struct lock *lock)
       // 递归捐赠，只要当前线程的优先级比锁记录的最大优先级大，就要捐赠，此处要维护好锁的最大优先级
       // 比如 H->M->L，锁最大优先级要设为 H，同时提升 M 和 L 优先级
       while (tmp_lock != NULL && 
-              tmp_lock->max_priority < cur->priority)
+              tmp_lock->donated_priority < cur->priority)
       {
-        tmp_lock->max_priority = cur->priority;
+        tmp_lock->donated_priority = cur->priority;
 
         // 更新优先级，即优先级捐赠，其中保证了一个优先级的顺序
         thread_update_priority(tmp_lock->holder);
@@ -256,7 +256,7 @@ void lock_acquire(struct lock *lock)
     // 终于持有了锁，于是把当前将要持有的锁设为空
     cur->desired_lock = NULL;
     // 考虑到锁释放时重置了优先级，而既然当前线程持有了锁，那么显然当前锁记录的最大优先级就应该设为当前线程的优先级
-    lock->max_priority = cur->priority;
+    lock->donated_priority = cur->priority;
 
     // 把锁加到线程持有锁列表里
     list_push_back(&cur->holding_locks, &lock->elem);
@@ -300,7 +300,7 @@ void lock_release(struct lock *lock)
     // 将锁从持有锁列表中移除
     list_remove(&lock->elem);
     // 重置锁记录的最大优先级
-    lock->max_priority = PRI_MIN;
+    lock->donated_priority = PRI_MIN;
     // 更新一下优先级
     thread_update_priority(thread_current());
   }

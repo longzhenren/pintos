@@ -377,12 +377,12 @@ void thread_foreach(thread_action_func *func, void *aux)
   }
 }
 
-bool cmp_lock_max_priority__thread(const struct list_elem *a, const struct list_elem *b, void *aux)
+bool cmp_lock_donated_priority__thread(const struct list_elem *a, const struct list_elem *b, void *aux)
 {
   struct lock *lock_a = list_entry(a, struct lock, elem);
   struct lock *lock_b = list_entry(b, struct lock, elem);
 
-  return lock_a->max_priority < lock_b->max_priority;
+  return lock_a->donated_priority < lock_b->donated_priority;
 }
 
 // 确保线程优先级顺序
@@ -401,9 +401,9 @@ void thread_update_priority(struct thread *t)
   if (!list_empty(&t->holding_locks))
   {
     // 找到持有锁中的最大优先级
-    max_lock_priority = list_entry(list_max(&t->holding_locks, cmp_lock_max_priority__thread, NULL),
+    max_lock_priority = list_entry(list_max(&t->holding_locks, cmp_lock_donated_priority__thread, NULL),
                                    struct lock, elem)
-                            ->max_priority;
+                            ->donated_priority;
 
     // 比当前（即原来）的优先级大的话，那就设成找到的最大优先级
     max_priority = max_priority < max_lock_priority ? max_lock_priority : max_priority;
