@@ -95,10 +95,10 @@ struct thread
   int64_t ticks_blocked;
 
   /* Members for project1 mission2 priority donate */
-  // 记录原来的优先级。没有的话优先级在捐赠后就没法恢复原来的优先级了
+  // 记录原来的优先级，没有的话优先级在捐赠后就没法恢复原来的优先级了
   int original_priority;
-  // 当前等待的锁，用于优先级捐赠，对于递归捐赠来说显然是需要的
-  struct lock *current_waiting_lock;
+  // 当前将要持有的锁，用于优先级捐赠，对于递归捐赠来说显然是需要的
+  struct lock *desired_lock;
   // 线程持有的锁，多捐赠时优先级要设为最大的那个
   struct list holding_locks;
 
@@ -156,6 +156,8 @@ int thread_get_load_avg(void);
 
 void blocked_thread_check(struct thread *t, void *aux UNUSED);
 
+// 确保线程优先级顺序
+void thread_guard_priority_order(void);
 // 更新优先级，并确保线程优先级顺序
 void thread_update_priority(struct thread *t);
 

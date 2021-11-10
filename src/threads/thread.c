@@ -385,6 +385,12 @@ bool cmp_lock_max_priority__thread(const struct list_elem *a, const struct list_
   return lock_a->max_priority < lock_b->max_priority;
 }
 
+// 确保线程优先级顺序
+void thread_guard_priority_order(void)
+{
+  list_sort(&ready_list, thread_cmp_priority, NULL);
+}
+
 // 更新优先级，并确保线程优先级顺序
 void thread_update_priority(struct thread *t)
 {
@@ -406,7 +412,7 @@ void thread_update_priority(struct thread *t)
   t->priority = max_priority;
 
   // 完了以后就更新一下就绪队列，确保优先级顺序
-  list_sort(&ready_list, thread_cmp_priority, NULL);
+  thread_guard_priority_order();
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
@@ -558,9 +564,11 @@ init_thread(struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *)t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+  
   t->original_priority = priority;
-  t->current_waiting_lock = NULL;
+  t->desired_lock = NULL;
   list_init(&t->holding_locks);
+
   old_level = intr_disable();
   list_insert_ordered(&all_list, &t->allelem, (list_less_func *)&thread_cmp_priority, NULL);
   intr_set_level(old_level);

@@ -224,8 +224,8 @@ void lock_acquire(struct lock *lock)
     // 当前锁没有持有线程的话，那就不用捐赠了
     if (lock->holder != NULL)
     {
-      // 设置线程当前等待的锁
-      cur->current_waiting_lock = tmp_lock = lock;
+      // 设置线程当前将要持有的锁
+      cur->desired_lock = tmp_lock = lock;
 
       // 递归捐赠，只要当前线程的优先级比锁记录的最大优先级大，就要捐赠，此处要维护好锁的最大优先级
       // 比如 H->M->L，锁最大优先级要设为 H，同时提升 M 和 L 优先级
@@ -238,7 +238,7 @@ void lock_acquire(struct lock *lock)
         thread_update_priority(tmp_lock->holder);
 
         // 下一个锁，在 H->M->L 中，就是 M 申请 L 持有的锁
-        tmp_lock = tmp_lock->holder->current_waiting_lock;
+        tmp_lock = tmp_lock->holder->desired_lock;
       }
     }
   }
@@ -253,8 +253,10 @@ void lock_acquire(struct lock *lock)
 
   if (!thread_mlfqs)
   {
-    // 终于持有了锁，于是把当前等待锁设为空
-    cur->current_waiting_lock = NULL;
+    // 终于持有了锁，于是把当前将要持有的锁设为空
+    cur->desired_lock = NULL;
+    // 考虑到锁释放时重置了优先级，而既然当前线程持有了锁，那么显然当前锁记录的最大优先级就应该设为当前线程的优先级
+    lock->max_priority = cur->priority;
 
     // 把锁加到线程持有锁列表里
     list_push_back(&cur->holding_locks, &lock->elem);
@@ -297,6 +299,8 @@ void lock_release(struct lock *lock)
   {
     // 将锁从持有锁列表中移除
     list_remove(&lock->elem);
+    // 重置锁记录的最大优先级
+    lock->max_priority = PRI_MIN;
     // 更新一下优先级
     thread_update_priority(thread_current());
   }
