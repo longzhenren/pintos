@@ -28,7 +28,7 @@
 
 #### 项目网络图
 
-![image-20211109125915465](http://longzhen.ren:12580/images/2021/11/09/image-20211109125915465.png)
+![repoImage](.\repoImage.jpeg)
 
 ### 参考资料
 
@@ -497,7 +497,7 @@ make check
 
 可以成功通过全部测试点
 
-![image-20211109130440039](http://longzhen.ren:12580/images/2021/11/09/image-20211109130440039.png)
+![testPass](.\testPass.png)
 
 ## 各成员的心得体会
 
