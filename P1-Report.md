@@ -707,7 +707,9 @@ struct lock
 
 > B2: Explain the data structure used to track priority donation. Use ASCII art to diagram a nested donation. (Alternately, paste an image.)
 
+如下图所示，这表示的是一个比较简单的优先级捐赠过程，包括了多次捐赠和递归捐赠的过程。
 
+![priority_donation](priority_donate.drawio.png)
 
 ### ALGORITHMS
 
