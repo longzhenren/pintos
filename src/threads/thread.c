@@ -705,6 +705,7 @@ void thread_update_recent_cpu_mlfqs(struct thread *t)
 {
   if (t == idle_thread)
     return;
+  // recent_cpu = (2*load_avg)/(2*load_avg + 1) * recent_cpu + nice
   t->recent_cpu = IADD(MUL(DIV(IMUL(load_avg, 2), IADD(IMUL(load_avg, 2), 1)), t->recent_cpu), t->nice);
 }
 
@@ -712,7 +713,6 @@ void thread_update_load_avg(void)
 {
   // load_avg = (59/60)*load_avg + (1/60)*ready_threads
   load_avg = ADD(IDIV(IMUL(load_avg, 59), 60), IDIV(CONST(ready_threads_count(thread_current())), 60));
-  // load_avg = ADD(IMUL(load_avg, IDIV(CONST(59), 60)), IDIV(CONST(ready_threads_count(thread_current())), 60));
 }
 
 fp_t ready_threads_count(struct thread *t)
