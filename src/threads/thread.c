@@ -421,6 +421,8 @@ void thread_set_priority(int new_priority)
 {
   // thread_current ()->priority = new_priority;
 
+  // 这个禁用中断是在看实验文档的题目时想到的
+  // 不过好像对于测试点来说，加不加都可以通过
   enum intr_level old_level;
 
   old_level = intr_disable();

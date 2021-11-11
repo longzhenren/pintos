@@ -826,7 +826,43 @@ void lock_release(struct lock *lock)
 
 > B6: Describe a potential race in thread_set_priority() and explain how your implementation avoids it. Can you use a lock to avoid this race?
 
+当使用 `thread_set_priority()` 设置线程优先级时，线程也有可能因被捐赠优先级而发送优先级更新，这可以通过禁用中断 `intr_disable()` 来避免。锁的话应该也行，只要让它们的执行不发生竞争冲突就行。
 
+```c++
+void thread_set_priority(int new_priority)
+{
+  // thread_current ()->priority = new_priority;
+
+  // 这个禁用中断是在看实验文档的题目时想到的
+  // 不过好像对于测试点来说，加不加都可以通过
+  enum intr_level old_level;
+
+  old_level = intr_disable();
+
+  if (!thread_mlfqs)
+  {
+    struct thread *cur = thread_current();
+
+    // 先设一下原来的优先级
+    cur->original_priority = new_priority;
+
+    // 没有持有锁或者新的优先级比当前优先级高，那就重设线程优先级并重新调度
+    // 我们需要保持线程优先级为被捐赠优先级和实际优先级中的最大值，即 max(donated, original)，这样才符合优先级捐赠部分的要求
+    if (list_empty(&cur->holding_locks) ||
+        new_priority > cur->priority)
+    {
+      thread_update_priority(cur);
+      thread_yield();
+    }
+  }
+  else
+  {
+    thread_current ()->priority = new_priority;
+  }
+
+  intr_set_level(old_level);
+}
+```
 
 ### RATIONALE
 
