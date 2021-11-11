@@ -85,8 +85,7 @@
 ### Mission2.1
 
 在Pintos中，线程加入队列时直接使用list_push_back 函数直接放在队列队尾。而线程为一个链表list结构，相较于动态维护，为每一个ele指定顺序，实现时选择了在每次更改链表时确保拥有正确的前后优先级关系，即可维持一个正确的优先级关系列表。
-而维持一个优先队列需要比较两个线程之间的优先级，因此实现一个比较函数后，就可以实现在有序队列中插入，进而在创建和唤醒以及挂起等函数中保证每次加入队列都维持队列的有序性，就可以保证优先级队列的实现了。而由于是抢占式，当一个线程更改完优先级之后，需要立即重新考虑所有线程的执行顺序，
-因而调用yeild，进入就绪态，重新调用。
+而维持一个优先队列需要比较两个线程之间的优先级，因此实现一个比较函数后，就可以实现在有序队列中插入，进而在创建和唤醒以及挂起等函数中保证每次加入队列都维持队列的有序性，就可以保证优先级队列的实现了。而由于是抢占式，当一个线程更改完优先级之后，需要立即重新考虑所有线程的执行顺序，因而调用yield，进入就绪态，重新调用。
 
 ### Mission2.2
 
@@ -290,6 +289,77 @@ if (list_empty(&cur->holding_locks) ||
 ```
 
 这样，总体上线程优先级捐赠部分的实验任务就完成了。
+
+**附加：信号量与条件变量相关的优先级调度**
+
+这部分本应该是Mission2.1的任务内容，但在最初任务分配时没有分配好，使这一部分移到了Mission2.2里去，为了突出Mission2.2是实现优先级捐赠的过程，所以就将这一部分移到最后来叙述（其实也比较简单）。
+
+首先可以知道信号量与条件变量相关的优先级调度的要求是“信号量唤醒时，唤醒信号量等待队列中优先级最高的线程”和“条件变量唤醒时，唤醒条件变量等待队列中优先级最高的线程”。而信号量唤醒的过程在 `sema_up()` 函数中，条件变量唤醒的过程在 `cond_signal()` 中，于是基本可以确定只要修改这两个函数就可以实现要求。
+
+那么就先看一下信号量 `sema_up()`，它就相当于一个V操作，其中关键部分就是当等待此信号量的线程队列不为空时，调用 `thread_unblock()` 函数，如下所示，主要做的就是取出队列的头部线程，然后取消阻塞。
+
+```c++
+if (!list_empty (&sema->waiters)) 
+ thread_unblock (list_entry (list_pop_front (&sema->waiters),
+                             struct thread, elem));
+```
+
+这样的话思路就挺清晰了，只要把从队首取线程改成取最大优先级的线程就可以了，如下所示。
+
+```c++
+// 找出最大优先级的线程，并取消阻塞，转入就绪队列中
+struct list_elem *max_priority_thread = list_max(&sema->waiters, cmp_thread_priority__synch, NULL);
+list_remove(max_priority_thread);
+
+thread_unblock(list_entry(max_priority_thread,
+                        struct thread, elem));
+```
+
+然后考虑到抢占式调度，所以在最后加上 `thread_yield()` 进行重新调度。
+
+然后再看一下条件变量 `cond_signal()`，其中关键部分就是当等待此条件变量的信号量元素队列不为空时，调用 `sema_up()` 函数，唤醒队首信号量元素包含的信号量，从而唤醒线程。
+
+```c++
+if (!list_empty (&cond->waiters)) 
+ sema_up (&list_entry (list_pop_front (&cond->waiters),
+                       struct semaphore_elem, elem)->semaphore);
+```
+
+这个形式和信号量的很像，可以想到这应该也是 `list_max()`、`list_remove()` 的改写形式。然后我们可以发现信号量元素是在 `cond_wait()` 函数中生成的，它主要就是包含一个初值为0的临时信号量，通过配合释放锁、P操作、获取锁实现，在P操作时临时信号量的线程等待队列中就新增了当前线程，也就是说实际上这个临时信号量的线程等待队列中只有一个线程，然后经过这样的分析，我们就能够写出需要的线程优先级比较函数了，如下所示。
+
+```c++
+bool cmp_cond_semaphore_thread_priority__synch(const struct list_elem *a, const struct list_elem *b, void *aux)
+{
+  // 对应上面的 list_push_back(&cond->waiters, &waiter.elem);
+  // 这样就使和信号量有关的线程能够分开处理（唤醒）
+  struct semaphore_elem *semaphore_a = list_entry(a, struct semaphore_elem, elem);
+  struct semaphore_elem *semaphore_b = list_entry(b, struct semaphore_elem, elem);
+  
+  // 这里的优先级比较，实际上这里的信号量的线程等待队列里只有 1 个线程
+  // 这从 cond_wait() 里的 sema_down(&waiter.semaphore); 可以得知，所以直接用一个 list_front() 取出线程进行优先级比较就可以了
+  struct thread *thread_a = list_entry(list_front(&semaphore_a->semaphore.waiters), struct thread, elem);
+  struct thread *thread_b = list_entry(list_front(&semaphore_b->semaphore.waiters), struct thread, elem);
+
+  return thread_a->priority < thread_b->priority;
+}
+```
+
+然后也就可以完成对 `cond_signal()` 的修改，主要部分如下所示。
+
+```c++
+if (!list_empty(&cond->waiters))
+{
+ // 唤醒优先级最大的线程
+ struct list_elem *max_priority_thread_semaphore = list_max(&cond->waiters, cmp_cond_semaphore_thread_priority__synch, NULL);
+ list_remove(max_priority_thread_semaphore);
+
+ sema_up(&list_entry(max_priority_thread_semaphore,
+                     struct semaphore_elem, elem)
+              ->semaphore);
+}
+```
+
+这样，信号量与条件变量相关的优先级调度也就基本完成了。
 
 ### Mission3
 
