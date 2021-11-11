@@ -669,19 +669,164 @@ intr_set_level (old_level);
 
 > B1: Copy here the declaration of each new or changed `struct` or `struct` member, global or static variable, `typedef`, or enumeration. Identify the purpose of each in 25 words or less.
 
+主要就是 `thread` 和 `lock` 结构体中新增的成员变量，具体见下面的代码和注释。
+
+```c++
+// thread.h
+struct thread
+{
+  ...
+
+  /* Members for project1 mission2 priority donate */
+  // 记录原来的优先级，没有的话优先级在捐赠后就没法恢复原来的优先级了
+  int original_priority;
+  // 当前将要持有的锁，用于优先级捐赠，对于递归捐赠来说显然是需要的
+  struct lock *desired_lock;
+  // 线程持有的锁，多捐赠时优先级要设为最大的那个
+  struct list holding_locks;
+
+  ...
+};
+
+// synch.h
+struct lock 
+{
+  ...
+
+  /* Members for project1 mission2 priority donate */
+  // 锁记录的最大优先级，用于优先级捐赠
+  int donated_priority;
+ 
+  /* Shared between thread.c and synch.c. */
+  // 这主要是为了锁能够添加到 thread->holding_locks 中
+  struct list_elem elem;      /* List element. */
+
+  ...
+};
+```
+
 > B2: Explain the data structure used to track priority donation. Use ASCII art to diagram a nested donation. (Alternately, paste an image.)
+
+
 
 ### ALGORITHMS
 
 > B3: How do you ensure that the highest priority thread waiting for a lock, semaphore, or condition variable wakes up first?
 
+锁、信号量、条件变量在唤醒线程时，本质上都是调用了 `sema_up()`，然后只要将原来从线程等待队列的队首取线程改成使用 `list_max()` 函数找出最大优先级的线程进行唤醒就可以了，这样就可以确保最大优先级的线程首先被唤醒，具体可见上面重难点讲解中的分析过程。
+
 > B4: Describe the sequence of events when a call to lock_acquire() causes a priority donation. How is nested donation handled?
 
+具体可下面的代码和注释，更详细的分析可见上面的设计思路和重难点讲解。
+
+```c++
+void lock_acquire(struct lock *lock)
+{
+  struct thread *cur;
+  struct lock *tmp_lock;
+
+  // 确保锁不为空
+  ASSERT(lock != NULL);
+  // 确保不在中断上下文
+  ASSERT(!intr_context());
+  // 确保锁不被当前线程持有
+  ASSERT(!lock_held_by_current_thread(lock));
+
+  // 任务3不使用
+  if (!thread_mlfqs)
+  {
+    // 获取当前线程
+    cur = thread_current();
+    // 设置线程当前将要持有的锁
+    cur->desired_lock = lock;
+
+    // 当前锁没有持有线程的话，那就不用捐赠了
+    if (lock->holder != NULL)
+    {
+      tmp_lock = lock;
+
+      // 递归捐赠，只要当前线程的优先级比锁记录的最大优先级大，就要捐赠，此处要维护好锁记录的被捐赠优先级
+      // 比如 H->M->L，锁最大优先级要设为 H，同时提升 M 和 L 优先级
+      while (tmp_lock != NULL && tmp_lock->donated_priority < cur->priority)
+      {
+        // 优先级捐赠
+        tmp_lock->donated_priority = cur->priority;
+
+        // 更新锁持有线程的优先级
+        thread_update_priority(tmp_lock->holder);
+
+        // 下一个锁，在 H->M->L 中，就是 M 申请 L 持有的锁
+        tmp_lock = tmp_lock->holder->desired_lock;
+      }
+    }
+  }
+
+  // P 操作，锁被其它线程持有时，当前线程就会阻塞
+  sema_down(&lock->semaphore);
+
+  // P 操作过了，然后线程持有锁
+  cur = thread_current();
+
+  // 锁的持有者成为当前线程
+  lock->holder = cur;
+
+  // 任务3不使用
+  if (!thread_mlfqs)
+  {
+    // 把锁加到线程持有锁列表里
+    list_push_back(&cur->holding_locks, &lock->elem);
+
+    // 终于持有了锁，于是把当前将要持有的锁设为空
+    cur->desired_lock = NULL;
+    
+    // 更新当前线程优先级
+    thread_update_priority(cur);
+  }
+}
+```
+
 > B5: Describe the sequence of events when lock_release() is called on a lock that a higher-priority thread is waiting for.
+
+具体可下面的代码和注释，更详细的分析可见上面的设计思路和重难点讲解。
+
+```c++
+void lock_release(struct lock *lock)
+{
+  struct thread *cur;
+
+  // 确保锁不为空
+  ASSERT(lock != NULL);
+  // 确保锁被当前线程持有
+  ASSERT(lock_held_by_current_thread(lock));
+
+  // 任务3不使用
+  if (!thread_mlfqs)
+  {
+    // 获取当前线程
+    cur = thread_current();
+
+    // 将锁从持有锁列表中移除
+    list_remove(&lock->elem);
+
+    // 重置锁记录的被捐赠优先级
+    lock->donated_priority = PRI_MIN;
+    
+    // 更新一下当前线程优先级
+    thread_update_priority(cur);
+  }
+
+  // 锁的持有者重置为空
+  lock->holder = NULL;
+  // V操作
+  sema_up(&lock->semaphore);
+}
+```
 
 ### SYNCHRONIZATION
 
 > B6: Describe a potential race in thread_set_priority() and explain how your implementation avoids it. Can you use a lock to avoid this race?
+
+
 
 ### RATIONALE
 
