@@ -34,7 +34,7 @@
 
 1. [Pintos Guide by  Stephen Tsung-Han Sher, Indiana University Bloomington](https://static1.squarespace.com/static/5b18aa0955b02c1de94e4412/t/5b85fad2f950b7b16b7a2ed6/1535507195196/Pintos+Guide)
 2. [Official Pintos documentation](https://web.stanford.edu/class/cs140/projects/pintos/pintos_1.html)
-2. [Kaist's gitbook](https://casys-kaist.github.io/pintos-kaistl)
+3. [Kaist's gitbook](https://casys-kaist.github.io/pintos-kaistl)
 
 ## 实验要求
 
@@ -893,7 +893,24 @@ void thread_set_priority(int new_priority)
 
 ### ALGORITHMS
 
-> C2: Suppose threads A, B, and C have nice values 0, 1, and 2. Each has a recent_cpu value of 0. Fill in the table below showing the scheduling decision and the priority and recent_cpu values for each thread after each given number of timer ticks:
+> C2: Suppose threads A, B, and C have nice values 0, 1, and 2. Each has a recent_cpu value of 0. Fill in the table below showing the scheduling decision and the priority and recent_cpu values for each thread **after** each given number of timer ticks:
+
+计算公式如下：
+
+`priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)`
+
+`recent_cpu = (2*load_avg)/(2*load_avg + 1) * recent_cpu + nice`
+
+`load_avg = (59/60)*load_avg + (1/60)*ready_threads`
+
+仅在timer_ticks=0时更新load_avg和全部线程的recent_cpu 
+
+- load_avg = 3/60 = 1/20
+- A->recent_cpu=(2\*1/20)/(2\*1/20 +1)*0+0=0
+- B->recent_cpu=(2\*1/20)/(2\*1/20 +1)*0+1=1
+- C->recent_cpu=(2\*1/20)/(2\*1/20 +1)*0+2=2
+
+因为表格中最大ticks为36<100，所以此后不再更新load_avg和全部线程的recent_cpu，只在单个线程时间片用完后更新其自身的recent_cpu和priority
 
 | timer ticks | `recent_cpu` A | `recent_cpu` B | `recent_cpu` C | `priority` A | `priority` B | `priority` C | thread to run |
 | ----------- | -------------- | -------------- | -------------- | ------------ | ------------ | ------------ | ------------- |
@@ -904,7 +921,7 @@ void thread_set_priority(int new_priority)
 | 16          | 12             | 5              | 2              | 60           | 60           | 59           | B             |
 | 20          | 12             | 9              | 2              | 60           | 59           | 59           | A             |
 | 24          | 16             | 9              | 2              | 59           | 59           | 59           | C             |
-| 24          | 16             | 9              | 6              | 59           | 59           | 58           | B             |
+| 28          | 16             | 9              | 6              | 59           | 59           | 58           | B             |
 | 32          | 16             | 13             | 6              | 59           | 58           | 58           | A             |
 | 36          | 20             | 13             | 6              | 58           | 58           | 58           | C             |
 
