@@ -22,14 +22,6 @@ struct lock
   {
     struct thread *holder;      /* Thread holding lock (for debugging). */
     struct semaphore semaphore; /* Binary semaphore controlling access. */
-    
-    /* Members for project1 mission2 priority donate */
-    // 锁记录的最大优先级，用于优先级捐赠
-    int donated_priority;
-
-    /* Shared between thread.c and synch.c. */
-    // 这主要是为了锁能够添加到 thread->holding_locks 中
-    struct list_elem elem;      /* List element. */
   };
 
 void lock_init (struct lock *);
