@@ -33,17 +33,21 @@ tid_t process_execute(const char *file_name)
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page(0);
+  // fn_copy likes "/bin/ls -l arg1 arg2"
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy(fn_copy, file_name, PGSIZE);
+  // get prog name likes "/bin/ls"
   char *tmp = malloc(strlen(file_name) + 1);
   strlcpy(tmp, fn_copy, PGSIZE);
 
   char *thread_name, *save_ptr;
+  // r in strtok_r:recursive
   thread_name = strtok_r(tmp, " ", &save_ptr);
-
+  // thread_name likes "/bin/ls"
+  // save_ptr likes "-l arg1 arg2"
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create(thread_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
   return tid;
@@ -54,16 +58,68 @@ tid_t process_execute(const char *file_name)
 static void
 start_process(void *file_name_)
 {
+  // file_name points to the fn_copy string in process_execute()
+  // likes "/bin/ls -l arg1 arg2"
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
+
+  char *token = malloc(strlen(file_name) + 1);
+  strlcpy(token, file_name, strlen(file_name) + 1);
+  char *save_ptr = NULL;
+  token = strtok_r(token, " ", &save_ptr);
 
   /* Initialize interrupt frame and load executable. */
   memset(&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
+
+  char *token = malloc(strlen(file_name) + 1);
+  strlcpy(token, file_name, strlen(file_name) + 1);
+  char *save_ptr = NULL;
+  token = strtok_r(token, " ", &save_ptr);
   success = load(file_name, &if_.eip, &if_.esp);
+
+  // passing arguments
+  // we should arrange the args onto the stack frame, depending on the %esp
+  char *esp = (char *)if_.esp; // 维护栈顶
+  int argv[128];               // 存储的参数地址
+  int argc = 0, tokensize = 0; //tokensize:token长度
+  for (; token != NULL; token = strtok_r(NULL, " ", &save_ptr))
+  {
+    tokensize = strlen(token) + 1;      //'(token)\0'
+    esp -= tokensize;                   // decrements the stack pointer
+    strlcpy(esp, token, tokensize + 1); // right-to-left order
+    argv[argc++] = (int)esp;
+  }
+
+  // insert word-align
+  while ((int)esp % 4 != 0)
+  {
+    esp--;
+  }
+
+  int *tmp = (int *)esp; // 接下来存argv地址
+  tmp--;
+  *tmp = 0; // argv[argc+1]
+  tmp--;
+  int i;
+  for (i = argc - 1; i >= 0; i--)
+  {
+    *tmp = argv[i];
+    tmp--;
+  }
+  // insert argv
+  *tmp = (int)(tmp + 1);
+  tmp--;
+  // insert argc
+  *tmp = argc;
+  tmp--;
+  // insert return address
+  *tmp = 0;
+  // update %esp
+  if_.esp = tmp;
 
   /* If load failed, quit. */
   palloc_free_page(file_name);
