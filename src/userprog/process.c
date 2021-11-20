@@ -43,7 +43,8 @@ tid_t process_execute(const char *file_name)
   thread_name = strtok_r(tmp, " ", &save_ptr);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create(thread_name, PRI_DEFAULT, start_process, fn_copy);
+  free(tmp);
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
   return tid;
@@ -58,12 +59,51 @@ start_process(void *file_name_)
   struct intr_frame if_;
   bool success;
 
+  char *fn_copy = malloc(strlen(file_name) + 1);
+  strlcpy(fn_copy, file_name, strlen(file_name) + 1); // backup
+
   /* Initialize interrupt frame and load executable. */
   memset(&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load(file_name, &if_.eip, &if_.esp);
+
+  char *tmpname = malloc(strlen(fn_copy) + 1), *save_ptr = NULL;
+  strlcpy(tmpname, fn_copy, strlen(fn_copy) + 1); // backup
+  tmpname = strtok_r(tmpname, " ", &save_ptr);
+
+  success = load(tmpname, &if_.eip, &if_.esp);
+
+  char *esp = (char *)if_.esp; // 维护栈顶
+  int argv[128];               // 存储的参数地址
+  int argc = 0, tmplen = 0;    // argc:参数数量 tmplen:tmpname长度
+  for (; tmpname != NULL; tmpname = strtok_r(NULL, " ", &save_ptr))
+  {
+    tmplen = strlen(tmpname) + 1;      //'(tmpname)\0'
+    esp -= tmplen;                     // decrements the stack pointer
+    strlcpy(esp, tmpname, tmplen + 1); // right-to-left order
+    argv[argc++] = (int)esp;
+  }
+  while ((int)esp % 4 != 0)
+  { // word-align
+    esp--;
+  }
+  int *tmp = (int *)esp; // 接下来存argv地址
+  tmp--;
+  *tmp = 0; // argv[argc+1]
+  tmp--;
+  int i;
+  for (i = argc - 1; i >= 0; i--)
+  {
+    *tmp = argv[i];
+    tmp--;
+  }
+  *tmp = (int)(tmp + 1); // argv
+  tmp--;
+  *tmp = argc; // argc;
+  tmp--;
+  *tmp = 0;      // return address
+  if_.esp = tmp; // 栈更新
 
   /* If load failed, quit. */
   palloc_free_page(file_name);
@@ -94,6 +134,7 @@ start_process(void *file_name_)
    does nothing. */
 int process_wait(tid_t child_tid UNUSED)
 {
+  // sleep(10);
   return -1;
 }
 
@@ -119,6 +160,7 @@ void process_exit(void)
     pagedir_activate(NULL);
     pagedir_destroy(pd);
   }
+  printf("%s: exit(%d)\n", cur->name, cur->ret);
 }
 
 /* Sets up the CPU for running user code in the current
