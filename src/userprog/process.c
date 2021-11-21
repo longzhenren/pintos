@@ -33,22 +33,16 @@ tid_t process_execute(const char *file_name)
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page(0);
-  // fn_copy likes "/bin/ls -l arg1 arg2"
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy(fn_copy, file_name, PGSIZE);
-  // get prog name likes "/bin/ls"
   char *tmp = malloc(strlen(file_name) + 1);
-  strlcpy(tmp, fn_copy, PGSIZE);
+  strlcpy(tmp, file_name, strlen(file_name) + 1);
+  char *save_ptr = NULL;
+  tmp = strtok_r(tmp, " ", &save_ptr);
 
-  char *thread_name, *save_ptr;
-  // r in strtok_r:recursive
-  thread_name = strtok_r(tmp, " ", &save_ptr);
-  // thread_name likes "/bin/ls"
-  // save_ptr likes "-l arg1 arg2"
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create(thread_name, PRI_DEFAULT, start_process, fn_copy);
-  free(tmp);
+  tid = thread_create(tmp, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
   return tid;
@@ -59,16 +53,9 @@ tid_t process_execute(const char *file_name)
 static void
 start_process(void *file_name_)
 {
-  // file_name points to the fn_copy string in process_execute()
-  // likes "/bin/ls -l arg1 arg2"
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
-
-  char *token = malloc(strlen(file_name) + 1);
-  strlcpy(token, file_name, strlen(file_name) + 1);
-  char *save_ptr = NULL;
-  token = strtok_r(token, " ", &save_ptr);
 
   /* Initialize interrupt frame and load executable. */
   memset(&if_, 0, sizeof if_);
@@ -76,51 +63,46 @@ start_process(void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
 
-  char *token = malloc(strlen(file_name) + 1);
-  strlcpy(token, file_name, strlen(file_name) + 1);
+  char *tmp = malloc(strlen(file_name) + 1);
+  strlcpy(tmp, file_name, strlen(file_name) + 1);
   char *save_ptr = NULL;
-  token = strtok_r(token, " ", &save_ptr);
-  success = load(file_name, &if_.eip, &if_.esp);
+  tmp = strtok_r(tmp, " ", &save_ptr);
 
-  // passing arguments
-  // we should arrange the args onto the stack frame, depending on the %esp
+  success = load(tmp, &if_.eip, &if_.esp);
+
+  /* 参数传递 */
   char *esp = (char *)if_.esp; // 维护栈顶
   int argv[128];               // 存储的参数地址
-  int argc = 0, tokensize = 0; //tokensize:token长度
-  for (; token != NULL; token = strtok_r(NULL, " ", &save_ptr))
+  int argc = 0, len = 0;       // argc:参数数量 len:tmp长度
+  for (; tmp != NULL; tmp = strtok_r(NULL, " ", &save_ptr))
   {
-    tokensize = strlen(token) + 1;      //'(token)\0'
-    esp -= tokensize;                   // decrements the stack pointer
-    strlcpy(esp, token, tokensize + 1); // right-to-left order
+    len = strlen(tmp) + 1;      //'(tmp)\0'
+    esp -= len;                 // decrements the stack pointer
+    strlcpy(esp, tmp, len + 1); // right-to-left order
     argv[argc++] = (int)esp;
   }
-
-  // insert word-align
   while ((int)esp % 4 != 0)
-  {
+  { // word-align
     esp--;
   }
-
-  int *tmp = (int *)esp; // 接下来存argv地址
-  tmp--;
-  *tmp = 0; // argv[argc+1]
-  tmp--;
+  int *p = (int *)esp; // 接下来存argv地址
+  p--;
+  *p = 0; // argv[argc+1]
+  p--;
   int i;
   for (i = argc - 1; i >= 0; i--)
   {
-    *tmp = argv[i];
-    tmp--;
+    *p = argv[i];
+    p--;
   }
-  // insert argv
-  *tmp = (int)(tmp + 1);
-  tmp--;
-  // insert argc
-  *tmp = argc;
-  tmp--;
-  // insert return address
-  *tmp = 0;
-  // update %esp
-  if_.esp = tmp;
+  *p = (int)(p + 1); // argv
+  p--;
+  *p = argc; // argc;
+  p--;
+  *p = 0;      // return address
+  if_.esp = p; // 栈更新
+  // free(p);
+  free(tmp);
 
   /* If load failed, quit. */
   palloc_free_page(file_name);
@@ -133,6 +115,7 @@ start_process(void *file_name_)
      arguments on the stack in the form of a `struct intr_frame',
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
+
   asm volatile("movl %0, %%esp; jmp intr_exit"
                :
                : "g"(&if_)
@@ -151,7 +134,7 @@ start_process(void *file_name_)
    does nothing. */
 int process_wait(tid_t child_tid UNUSED)
 {
-  // sleep(10);
+  timer_sleep(100);
   return -1;
 }
 
@@ -173,11 +156,11 @@ void process_exit(void)
          directory before destroying the process's page
          directory, or our active page directory will be one
          that's been freed (and cleared). */
+    printf("%s: exit(%d)\n", cur->name, cur->ret);
     cur->pagedir = NULL;
     pagedir_activate(NULL);
     pagedir_destroy(pd);
   }
-  printf("%s: exit(%d)\n", cur->name, cur->ret);
 }
 
 /* Sets up the CPU for running user code in the current
@@ -492,7 +475,7 @@ setup_stack(void **esp)
   {
     success = install_page(((uint8_t *)PHYS_BASE) - PGSIZE, kpage, true);
     if (success)
-      *esp = PHYS_BASE - 12;
+      *esp = PHYS_BASE;
     else
       palloc_free_page(kpage);
   }
