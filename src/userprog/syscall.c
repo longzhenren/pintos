@@ -39,19 +39,18 @@ void close(int);
 
 static void syscall_handler(struct intr_frame *);
 
-// bool pointer_valid(void *esp, int num)
-// {
-//   int i;
-//   struct thread *cur = thread_current();
-//   for (i = 0; i < num * 4; i++)
-//   {
-//     if (!is_user_vaddr(esp + i) || pagedir_get_page(cur->pagedir, esp + i) == NULL)
-//     {
-//       return false;
-//     }
-//   }
-//   return true;
-// }
+bool ptr_valid(void *esp, int num)
+{
+  struct thread *cur = thread_current();
+  for (int i = 0; i < num * 4; i++)
+  {
+    if (!is_user_vaddr(esp + i) || pagedir_get_page(cur->pagedir, esp + i) == NULL)
+    {
+      return false;
+    }
+  }
+  return true;
+}
 
 void syscall_init(void)
 {
@@ -61,8 +60,7 @@ void syscall_init(void)
 static void syscall_handler(struct intr_frame *f)
 {
   void *esp = f->esp;
-  printf("!!!!");
-  if (esp == NULL)
+  if (esp == NULL || !ptr_valid(esp, 1))
   {
     exit(-1);
   }
@@ -108,11 +106,11 @@ static void syscall_handler(struct intr_frame *f)
     call_close(f);
     break;
   default:
-    exit(-1);
+    // exit(-1);
+    thread_exit();
     break;
   }
   // printf("system call!\n");
-  thread_exit();
 }
 
 /* Terminates Pintos*/
@@ -130,10 +128,8 @@ void halt(void)
 void call_exit(struct intr_frame *f)
 {
   void *esp = f->esp;
-  // if (!pointer_valid(esp + 4, 1))
-  // {
-  //   exit(-1);
-  // }
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
   int status = *(int *)(esp + 4);
   exit(status);
 }
@@ -149,6 +145,9 @@ void exit(int status)
 and returns the new process's program id (pid). */
 void call_exec(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
 }
 pid_t exec(const char *cmd_line)
 {
@@ -157,10 +156,9 @@ pid_t exec(const char *cmd_line)
 /* Waits for a child process pid and retrieves the child's exit status. */
 void call_wait(struct intr_frame *f)
 {
-  // if (!pointer_valid(f->esp + 4, 1))
-  // {
-  //   exit(-1);
-  // }
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
   pid_t pid = *(int *)(f->esp + 4);
   f->eax = wait(pid);
 }
@@ -173,6 +171,9 @@ int wait(pid_t pid)
  Returns true if successful, false otherwise. */
 void call_create(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
 }
 bool create(const char *file, unsigned initial_size)
 {
@@ -182,6 +183,9 @@ bool create(const char *file, unsigned initial_size)
  Returns true if successful, false otherwise. */
 void call_remove(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
 }
 bool remove(const char *file)
 {
@@ -191,6 +195,9 @@ bool remove(const char *file)
 or -1 if the file could not be opened. */
 void call_open(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
 }
 int open(const char *file)
 {
@@ -199,6 +206,9 @@ int open(const char *file)
 /* Returns the size, in bytes, of the file open as fd. */
 void call_filesize(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
 }
 int filesize(int fd)
 {
@@ -209,6 +219,9 @@ Returns the number of bytes actually read (0 at end of file),
 or -1 if the file could not be read*/
 void call_read(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
 }
 int read(int fd, void *buffer, unsigned size)
 {
@@ -218,6 +231,9 @@ int read(int fd, void *buffer, unsigned size)
 Returns the number of bytes actually written, which may be less than size if some bytes could not be written. */
 void call_write(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
   int fd = *(int *)(f->esp + 4);
   void *buffer = *(char **)(f->esp + 8);
   unsigned size = *(unsigned *)(f->esp + 12);
@@ -234,6 +250,9 @@ int write(int fd, const void *buffer, unsigned size)
 expressed in bytes from the beginning of the file.*/
 void call_seek(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
 }
 void seek(int fd, unsigned position)
 {
@@ -243,6 +262,9 @@ void seek(int fd, unsigned position)
 expressed in bytes from the beginning of the file. */
 void call_tell(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
 }
 unsigned tell(int fd)
 {
@@ -251,6 +273,9 @@ unsigned tell(int fd)
 /* Closes the description fd */
 void call_close(struct intr_frame *f)
 {
+  void *esp = f->esp;
+  if (!ptr_valid(esp + 4, 1))
+    exit(-1);
 }
 void close(int fd)
 {
