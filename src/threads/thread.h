@@ -101,6 +101,9 @@ struct thread
 
    /* Owned by thread.c. */
    unsigned magic; /* Detects stack overflow. */
+
+   // saved file description list in call_open
+   struct list fd_list;
 };
 
 /* If false (default), use round-robin scheduler.

@@ -8,37 +8,16 @@
 #include "devices/shutdown.h"
 #include "pagedir.h"
 #include "threads/vaddr.h"
+#include "filesys/filesys.h"
+#include "threads/synch.h"
 
-void call_halt(void);
-void call_exit(struct intr_frame *);
-void call_exec(struct intr_frame *);
-void call_wait(struct intr_frame *);
-void call_create(struct intr_frame *);
-void call_remove(struct intr_frame *);
-void call_open(struct intr_frame *);
-void call_filesize(struct intr_frame *);
-void call_read(struct intr_frame *);
-void call_write(struct intr_frame *);
-void call_seek(struct intr_frame *);
-void call_tell(struct intr_frame *);
-void call_close(struct intr_frame *);
-
-void halt(void);
-void exit(int);
-pid_t exec(const char *);
-int wait(pid_t pid);
-bool create(const char *, unsigned);
-bool remove(const char *);
-int open(const char *);
-int filesize(int fd);
-int read(int, void *, unsigned);
-int write(int, const void *, unsigned);
-void seek(int, unsigned);
-unsigned tell(int);
-void close(int);
+struct lock fd_lock;
+struct list file_opened_list;
+int fd_num;
 
 static void syscall_handler(struct intr_frame *);
 
+// Check the validity of given pointer, num is the num of args in a call.
 bool ptr_valid(void *esp, int num)
 {
   struct thread *cur = thread_current();
@@ -55,6 +34,9 @@ bool ptr_valid(void *esp, int num)
 void syscall_init(void)
 {
   intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
+  fd_num = 3;
+  list_init(&file_opened_list);
+  lock_init(&fd_lock);
 }
 
 static void syscall_handler(struct intr_frame *f)
@@ -106,11 +88,9 @@ static void syscall_handler(struct intr_frame *f)
     call_close(f);
     break;
   default:
-    // exit(-1);
     thread_exit();
     break;
   }
-  // printf("system call!\n");
 }
 
 /* Terminates Pintos*/
@@ -172,11 +152,19 @@ int wait(pid_t pid)
 void call_create(struct intr_frame *f)
 {
   void *esp = f->esp;
-  if (!ptr_valid(esp + 4, 1))
+  if (!ptr_valid(esp + 4, 2))
     exit(-1);
+  char *file = *(char **)(esp + 4);
+  unsigned initial_size = *(int *)(esp + 8);
+  if (file == NULL || !ptr_valid(file, 1))
+    exit(-1);
+  lock_acquire(&fd_lock);
+  f->eax = create(file, initial_size);
+  lock_release(&fd_lock);
 }
 bool create(const char *file, unsigned initial_size)
 {
+  return filesys_create(file, initial_size);
 }
 
 /* Deletes the file called file.
@@ -198,9 +186,28 @@ void call_open(struct intr_frame *f)
   void *esp = f->esp;
   if (!ptr_valid(esp + 4, 1))
     exit(-1);
+  char *file = *(char **)(esp + 4);
+  if (file == NULL || !ptr_valid(file, 1))
+    exit(-1);
+  lock_acquire(&fd_lock);
+  f->eax = open(file);
+  lock_release(&fd_lock);
 }
 int open(const char *file)
 {
+  struct file *FILE = filesys_open(file);
+  if (FILE == NULL)
+    return -1;
+  struct file_descriptor *fd = malloc(sizeof(struct file_descriptor));
+  if (fd == NULL)
+  {
+    file_close(FILE);
+    return -1;
+  }
+  fd->file = FILE;
+  fd->num = fd_num++;
+  list_push_back(&thread_current()->fd_list, &fd->elem);
+  return fd->num;
 }
 
 /* Returns the size, in bytes, of the file open as fd. */
