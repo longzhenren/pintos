@@ -9,11 +9,19 @@
 #include "pagedir.h"
 #include "threads/vaddr.h"
 #include "filesys/filesys.h"
+#include "filesys/file.h"
 #include "threads/synch.h"
+#include "devices/input.h"
 
 struct lock fd_lock;
-struct list file_opened_list;
+// struct list file_opened_list;
 int fd_num;
+struct file_descriptor
+{
+  int num;
+  struct file *file;
+  struct list_elem elem;
+};
 
 static void syscall_handler(struct intr_frame *);
 
@@ -31,11 +39,23 @@ bool ptr_valid(void *esp, int num)
   return true;
 }
 
+struct file_descriptor *get_fd(struct thread *t, int num)
+{
+  struct list_elem *e;
+  for (e = list_begin(&t->fd_list); e != list_end(&t->fd_list); e = e->prev)
+  {
+    struct file_descriptor *fd = list_entry(e, struct file_descriptor, elem);
+    if (fd->num == num)
+      return fd;
+  }
+  return NULL;
+}
+
 void syscall_init(void)
 {
   intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
   fd_num = 3;
-  list_init(&file_opened_list);
+  // list_init(&file_opened_list);
   lock_init(&fd_lock);
 }
 
@@ -198,16 +218,14 @@ int open(const char *file)
   struct file *FILE = filesys_open(file);
   if (FILE == NULL)
     return -1;
-  struct file_descriptor *fd = malloc(sizeof(struct file_descriptor));
-  if (fd == NULL)
-  {
-    file_close(FILE);
+  // 文件关闭之后一定记得释放FD避免内存泄漏！！！
+  struct file_descriptor *FD = malloc(sizeof(struct file_descriptor));
+  if (FD == NULL)
     return -1;
-  }
-  fd->file = FILE;
-  fd->num = fd_num++;
-  list_push_back(&thread_current()->fd_list, &fd->elem);
-  return fd->num;
+  FD->file = FILE;
+  FD->num = fd_num;
+  list_push_back(&thread_current()->fd_list, &FD->elem);
+  return fd_num++;
 }
 
 /* Returns the size, in bytes, of the file open as fd. */
@@ -216,9 +234,17 @@ void call_filesize(struct intr_frame *f)
   void *esp = f->esp;
   if (!ptr_valid(esp + 4, 1))
     exit(-1);
+  int fd = *(int *)(esp + 4);
+  lock_acquire(&fd_lock);
+  f->eax = filesize(fd);
+  lock_release(&fd_lock);
 }
 int filesize(int fd)
 {
+  struct file_descriptor *FD = get_fd(thread_current(), fd);
+  if (FD == NULL)
+    return -1;
+  return file_length(FD->file);
 }
 
 /* Reads size bytes from the file open as fd into buffer. 
@@ -227,11 +253,35 @@ or -1 if the file could not be read*/
 void call_read(struct intr_frame *f)
 {
   void *esp = f->esp;
-  if (!ptr_valid(esp + 4, 1))
+  if (!ptr_valid(esp + 4, 3))
     exit(-1);
+  int fd = *(int *)(esp + 4);
+  void *buffer = *(char **)(esp + 8);
+  unsigned size = *(unsigned *)(esp + 12);
+  if (buffer == NULL || !ptr_valid(buffer, 1))
+    exit(-1);
+  lock_acquire(&fd_lock);
+  f->eax = read(fd, buffer, size);
+  lock_release(&fd_lock);
 }
 int read(int fd, void *buffer, unsigned size)
 {
+  if (fd == 0)
+  {
+    char *buf = *(char **)buffer;
+    for (int i = 0; i < size; i++)
+    {
+      buf[i] = input_getc();
+    }
+    return size;
+  }
+  else
+  {
+    struct file_descriptor *FD = get_fd(thread_current(), fd);
+    if (FD == NULL)
+      return -1;
+    return file_read(FD->file, buffer, size);
+  }
 }
 
 /* Writes size bytes from buffer to the open file fd. 
@@ -239,18 +289,30 @@ Returns the number of bytes actually written, which may be less than size if som
 void call_write(struct intr_frame *f)
 {
   void *esp = f->esp;
-  if (!ptr_valid(esp + 4, 1))
+  if (!ptr_valid(esp + 4, 3))
     exit(-1);
   int fd = *(int *)(f->esp + 4);
   void *buffer = *(char **)(f->esp + 8);
   unsigned size = *(unsigned *)(f->esp + 12);
+  if (buffer == NULL || !ptr_valid(buffer, 1))
+    exit(-1);
   f->eax = write(fd, buffer, size);
 }
 
 int write(int fd, const void *buffer, unsigned size)
 {
-  putbuf(buffer, size);
-  return size;
+  if (fd == 1)
+  {
+    putbuf(buffer, size);
+    return size;
+  }
+  else
+  {
+    struct file_descriptor *FD = get_fd(thread_current(), fd);
+    if (FD == NULL)
+      return -1;
+    return file_write(FD->file, buffer, size);
+  }
 }
 
 /* Changes the next byte to be read or written in open file fd to position, 
@@ -258,7 +320,7 @@ expressed in bytes from the beginning of the file.*/
 void call_seek(struct intr_frame *f)
 {
   void *esp = f->esp;
-  if (!ptr_valid(esp + 4, 1))
+  if (!ptr_valid(esp + 4, 2))
     exit(-1);
 }
 void seek(int fd, unsigned position)
@@ -283,7 +345,17 @@ void call_close(struct intr_frame *f)
   void *esp = f->esp;
   if (!ptr_valid(esp + 4, 1))
     exit(-1);
+  int fd = *(int *)(f->esp + 4);
+  lock_acquire(&fd_lock);
+  close(fd);
+  lock_release(&fd_lock);
 }
 void close(int fd)
 {
+  struct file_descriptor *FD = get_fd(thread_current(), fd);
+  if (FD == NULL)
+    return -1;
+  file_close(FD->file);
+  list_remove(&FD->elem);
+  free(FD);
 }
