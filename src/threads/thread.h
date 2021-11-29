@@ -4,6 +4,8 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
+#include "userprog/process.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -16,6 +18,7 @@ enum thread_status
 
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
+typedef int pid_t;
 typedef int tid_t;
 #define TID_ERROR ((tid_t)-1) /* Error value for tid_t. */
 
@@ -23,6 +26,28 @@ typedef int tid_t;
 #define PRI_MIN 0      /* Lowest priority. */
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63     /* Highest priority. */
+
+/**
+ * 这里只实现了子进程相关需要变量，建议将文件管理打开等变量也整合进来
+ * 
+ */
+struct process_info
+{
+   // saved file description list in call_open
+   struct list fd_list;
+
+   pid_t pid;
+   bool is_waited;
+   bool is_alive;
+   bool is_parentalive;
+   struct condition cond;
+   struct lock lock;
+   struct list_elem child_elem;
+   struct file *exec_file;
+   struct list children_list;
+
+   int ret;
+};
 
 /* A kernel thread or user process.
 
@@ -89,7 +114,6 @@ struct thread
    uint8_t *stack;            /* Saved stack pointer. */
    int priority;              /* Priority. */
    struct list_elem allelem;  /* List element for all threads list. */
-   int ret;
 
    /* Shared between thread.c and synch.c. */
    struct list_elem elem; /* List element. */
@@ -97,13 +121,11 @@ struct thread
    // #ifdef USERPROG
    /* Owned by userprog/process.c. */
    uint32_t *pagedir; /* Page directory. */
-                      // #endif
+   struct process_info *process_info;
+   // #endif
 
    /* Owned by thread.c. */
    unsigned magic; /* Detects stack overflow. */
-
-   // saved file description list in call_open
-   struct list fd_list;
 };
 
 /* If false (default), use round-robin scheduler.

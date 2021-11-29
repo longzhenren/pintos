@@ -18,10 +18,80 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "devices/timer.h"
+#include "threads/synch.h"
 
-static thread_func start_process NO_RETURN;
+struct lock lock_filesys;
+struct process_init_data
+{
+  char *args;                /* 传入的参数*/
+  struct semaphore sema;     /* 父进程等待子进程的信号量 */
+  bool load_status;          /* 是否成功开启进程*/
+  struct process_info *info; /*保存进程的进程信息 */
+};
+typedef void process_action_func(struct process_info *info, void *aux);
+static bool init_process_info(struct process_info **info_ptr);
+static void start_process(void *init_data_);
 static bool load(const char *cmdline, void (**eip)(void), void **esp);
+void main_init(void);
+void process_foreach(struct list *list, process_action_func *func, void *aux);
 
+/**
+ * 在thread/init.c中补充初始化主进程的信息
+ * 主进程没有父进程
+ * 
+ */
+void main_init(void)
+{
+
+  struct process_info *main_info;
+
+  bool result = init_process_info(&main_info);
+
+  main_info->is_parentalive = false;
+  struct thread *t = thread_current();
+  t->process_info = main_info;
+}
+/**
+ * 进程初始化信息
+ * 
+ * @param init_data 
+ * @param args_copy 
+ */
+void process_set_init_data(struct process_init_data *init_data, char *args_copy)
+{
+  init_data->args = args_copy;
+  /**
+   * 初始化的时候锁住
+   * 
+   */
+  sema_init(&(init_data->sema), 0);
+  init_data->load_status = false;
+}
+
+bool init_process_info(struct process_info **info_ptr)
+{
+  struct process_info *info = *info_ptr;
+  info = malloc(sizeof(struct process_info));
+  if (info == NULL)
+    return false;
+
+  // initialize file descriptor list
+  list_init(&(info->fd_list));
+
+  info->is_alive = true;
+  info->is_waited = false;
+  info->is_parentalive = true;
+  info->exec_file = NULL;
+  lock_init(&(info->lock));
+  cond_init(&(info->cond));
+  list_init(&(info->children_list));
+  list_init(&(info->fd_list));
+  info->ret = 0;
+  info->pid = -1;
+  *info_ptr = info;
+
+  return true;
+}
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -37,24 +107,54 @@ tid_t process_execute(const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy(fn_copy, file_name, PGSIZE);
-  char *tmp = malloc(strlen(file_name) + 1);
-  strlcpy(tmp, file_name, strlen(file_name) + 1);
-  char *save_ptr = NULL;
-  tmp = strtok_r(tmp, " ", &save_ptr);
+
+  char tmp[strnlen(fn_copy, PGSIZE)];
+  strlcpy(tmp, fn_copy, PGSIZE);
+
+  char *thread_name, *save_ptr;
+  thread_name = strtok_r(tmp, " ", &save_ptr);
+  ASSERT(thread_name != NULL);
+
+  /* setup the data struct to pass to start_process */
+  struct process_init_data init_data;
+  process_set_init_data(&init_data, fn_copy);
+
+  /*进行有关父子进程相关信息创建维护*/
+  struct process_info *child_info;
+  if (init_process_info(&child_info) == false)
+  {
+    return -1;
+  }
+  init_data.info = child_info;
+
+  struct process_info *this_info = thread_current()->process_info;
+  //将子进程列表放入父进程的子进程列表中
+  list_push_back(&(this_info->children_list), &(child_info->child_elem));
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create(tmp, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page(fn_copy);
+  tid = thread_create(thread_name, PRI_DEFAULT, start_process, (void *)&init_data);
+  if (tid != TID_ERROR)
+  {
+    sema_down(&(init_data.sema));
+  }
+
+  palloc_free_page(fn_copy);
+
+  if (!init_data.load_status)
+  {
+    return TID_ERROR;
+  }
+
   return tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
-static void
-start_process(void *file_name_)
+static void start_process(void *init_data_)
 {
-  char *file_name = file_name_;
+  struct process_init_data *init_data = (struct process_init_data *)init_data_;
+  char *file_name = init_data->args;
+
   struct intr_frame if_;
   bool success;
 
@@ -70,6 +170,29 @@ start_process(void *file_name_)
   tmp = strtok_r(tmp, " ", &save_ptr);
 
   success = load(tmp, &if_.eip, &if_.esp);
+
+  /**
+ * 初始化进程信息
+ * 
+ */
+  init_data->load_status = success;
+  struct thread *t = thread_current();
+  init_data->info->pid = (pid_t)t->tid;
+  t->process_info = init_data->info;
+
+  /**
+   * 初始化完成后再释放掉可以保证主进程不中断
+   * 
+   */
+  sema_up(&(init_data->sema));
+
+  /* If load failed, quit. */
+
+  if (!success)
+  {
+    process_close(-1);
+    thread_exit();
+  }
 
   /* 参数传递 */
   char *esp = (char *)if_.esp; // 维护栈顶
@@ -105,11 +228,6 @@ start_process(void *file_name_)
   // free(p);
   free(tmp);
 
-  /* If load failed, quit. */
-  palloc_free_page(file_name);
-  if (!success)
-    thread_exit();
-
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -123,7 +241,58 @@ start_process(void *file_name_)
                : "memory");
   NOT_REACHED();
 }
+/**
+ * @brief 获取进程信息
+ * 
+ * @param parent_info 
+ * @param child_pid 
+ * @return struct process_info* 
+ */
+struct process_info *
+process_get_info(struct process_info *parent_info, pid_t child_pid)
+{
+  struct list_elem *e;
+  struct list *list = &(parent_info->children_list);
 
+  for (e = list_begin(list); e != list_end(list); e = list_next(e))
+  {
+    struct process_info *info = list_entry(e, struct process_info,
+                                           child_elem);
+    if (info->pid == child_pid)
+      return info;
+  }
+  return NULL;
+}
+/**
+ * @brief 释放掉所有已退出子进程的信息，如果没退出，就等待
+ * 
+ * @param parent_info 
+ */
+void process_free_children(struct process_info *parent_info)
+{
+  struct list *list = &(parent_info->children_list);
+  struct list_elem *e;
+  struct list_elem *ne;
+
+  e = list_begin(list);
+  while (e != list_end(list))
+  {
+    struct process_info *child_info =
+        list_entry(e, struct process_info, child_elem);
+
+    ne = list_next(e);
+
+    lock_acquire(&(child_info->lock));
+    if (!child_info->is_alive)
+    {
+      list_remove(e);
+      free(child_info);
+    }
+    else
+      lock_release(&(child_info->lock));
+    e = ne;
+  }
+}
 /* Waits for thread TID to die and returns its exit status.  If
    it was terminated by the kernel (i.e. killed due to an
    exception), returns -1.  If TID is invalid or if it was not a
@@ -135,10 +304,53 @@ start_process(void *file_name_)
    does nothing. */
 int process_wait(tid_t child_tid UNUSED)
 {
-  timer_sleep(100);
-  return -1;
+  struct process_info *child_info =
+      process_get_info(thread_current()->process_info, child_tid);
+
+  if (child_info == NULL)
+    return -1;
+
+  int result = -1;
+  /**
+   * 等待这个子进程结束
+   */
+  lock_acquire(&(child_info->lock));
+
+  if (!child_info->is_waited && child_info->is_alive)
+  {
+    cond_wait(&(child_info->cond), &(child_info->lock));
+  }
+  result = child_info->ret;
+  child_info->is_waited = true;
+  child_info->ret = -1;
+  lock_release(&(child_info->lock));
+
+  return result;
+}
+/**
+ * @brief 释放掉持有的所有子进程的锁
+ * 
+ * @param info 
+ * @param UNUSED 
+ */
+void release_children_locks(struct process_info *info, void *aux UNUSED)
+{
+  if (lock_held_by_current_thread(&(info->lock)))
+    lock_release(&(info->lock));
 }
 
+/**
+ * @brief 设定子进程的父进程状态为结束
+ * 
+ * @param info 
+ * @param UNUSED 
+ */
+void set_parent_dead(struct process_info *info, void *aux UNUSED)
+{
+  lock_acquire(&(info->lock));
+  info->is_parentalive = false;
+  lock_release(&(info->lock));
+}
 /* Free the current process's resources. */
 void process_exit(void)
 {
@@ -157,13 +369,88 @@ void process_exit(void)
          directory before destroying the process's page
          directory, or our active page directory will be one
          that's been freed (and cleared). */
-    printf("%s: exit(%d)\n", cur->name, cur->ret);
+
     cur->pagedir = NULL;
     pagedir_activate(NULL);
     pagedir_destroy(pd);
   }
+  struct process_info *info = cur->process_info;
+
+  /* 关闭所有打开的文件 */
+  //process_fd_close_all(info);
+
+  /* allow writes to the executable */
+  // if (!lock_held_by_current_thread(&lock_filesys))
+  //   lock_acquire(&lock_filesys);
+  // file_close(info->exec_file);
+  // lock_release(&lock_filesys);
+
+  if (!lock_held_by_current_thread(&info->lock))
+    lock_acquire(&(info->lock));
+
+  /* 更改进程状态为已经退出 */
+  info->is_alive = false;
+
+  /* 释放掉持有的子进程的锁 */
+  process_foreach(&(info->children_list), &release_children_locks, NULL);
+
+  /*父进程已经结束 */
+  process_foreach(&(info->children_list), &set_parent_dead, NULL);
+
+  /* 释放掉所有已结束的子进程*/
+  process_free_children(info);
+  printf("%s: exit(%d)\n", cur->name, info->ret);
+
+  /* 如果父进程已经结束了 */
+  if (!info->is_parentalive)
+  {
+    lock_release(&(info->lock));
+    free(info);
+    info = NULL;
+  }
+  else
+  {
+    /**
+     * 如果父进程在等自己结束，告诉父进程自己结束了
+     * 
+     */
+    cond_signal(&(info->cond), &(info->lock));
+    lock_release(&(info->lock));
+  }
+}
+/**
+ * @brief 遍历列表里所有进程
+ * 
+ * 
+ * @param list 
+ * @param func 
+ * @param aux 
+ */
+void process_foreach(struct list *list, process_action_func *func, void *aux)
+{
+  struct list_elem *e;
+
+  for (e = list_begin(list); e != list_end(list);
+       e = list_next(e))
+  {
+    struct process_info *info = list_entry(e, struct process_info, child_elem);
+
+    func(info, aux);
+  }
 }
 
+/**
+ * @brief 退出的时候保存退出状态
+ * 
+ * @param ret 
+ */
+void process_close(int ret)
+{
+  struct process_info *info = thread_current()->process_info;
+  lock_acquire(&(info->lock));
+  info->ret = ret;
+  lock_release(&(info->lock));
+}
 /* Sets up the CPU for running user code in the current
    thread.
    This function is called on every context switch. */

@@ -1,4 +1,5 @@
 #include "userprog/syscall.h"
+#include "userprog/process.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,7 +43,7 @@ bool ptr_valid(void *esp, int num)
 struct file_descriptor *get_fd(struct thread *t, int num)
 {
   struct list_elem *e;
-  for (e = list_begin(&t->fd_list); e != list_end(&t->fd_list); e = e->prev)
+  for (e = list_begin(&t->process_info->fd_list); e != list_end(&t->process_info->fd_list); e = e->prev)
   {
     struct file_descriptor *fd = list_entry(e, struct file_descriptor, elem);
     if (fd->num == num)
@@ -68,42 +69,55 @@ static void syscall_handler(struct intr_frame *f)
   }
   switch (*(int *)esp)
   {
+  /* Halt the operating system. */
   case SYS_HALT:
     call_halt();
-    break; /* Halt the operating system. */
+    break;
+  /* Terminate this process. */
   case SYS_EXIT:
     call_exit(f);
-    break; /* Terminate this process. */
+    break;
+  /* Start another process. */
   case SYS_EXEC:
     call_exec(f);
-    break; /* Start another process. */
+    break;
+  /* Wait for a child process to die. */
   case SYS_WAIT:
     call_wait(f);
-    break; /* Wait for a child process to die. */
+    break;
+  /* Create a file. */
   case SYS_CREATE:
     call_create(f);
-    break; /* Create a file. */
+    break;
+  /* Delete a file. */
   case SYS_REMOVE:
     call_remove(f);
-    break; /* Delete a file. */
+    break;
+  /* Open a file. */
   case SYS_OPEN:
     call_open(f);
-    break; /* Open a file. */
+    break;
+  /* Obtain a file's size. */
   case SYS_FILESIZE:
     call_filesize(f);
-    break; /* Obtain a file's size. */
+    break;
+  /* Read from a file. */
   case SYS_READ:
     call_read(f);
-    break; /* Read from a file. */
+    break;
+  /* Write to a file. */
   case SYS_WRITE:
     call_write(f);
-    break; /* Write to a file. */
+    break;
+  /* Change position in a file. */
   case SYS_SEEK:
     call_seek(f);
-    break; /* Change position in a file. */
+    break;
+  /* Report current position in a file. */
   case SYS_TELL:
     call_tell(f);
-    break; /* Report current position in a file. */
+    break;
+  /* Close a file. */
   case SYS_CLOSE:
     call_close(f);
     break;
@@ -118,7 +132,6 @@ void call_halt(void)
 {
   halt();
 }
-
 void halt(void)
 {
   shutdown_power_off();
@@ -133,11 +146,13 @@ void call_exit(struct intr_frame *f)
   int status = *(int *)(esp + 4);
   exit(status);
 }
-
 void exit(int status)
 {
   struct thread *t = thread_current();
-  t->ret = status;
+  lock_acquire(&(t->process_info->lock));
+  t->process_info->ret = status;
+  lock_release(&(t->process_info->lock));
+
   thread_exit();
 }
 
@@ -148,9 +163,15 @@ void call_exec(struct intr_frame *f)
   void *esp = f->esp;
   if (!ptr_valid(esp + 4, 1))
     exit(-1);
+
+  char *cmd_line = *(char **)(esp + 4);
+  if (cmd_line == NULL || !ptr_valid(cmd_line, 1))
+    exit(-1);
+  f->eax = exec(cmd_line);
 }
 pid_t exec(const char *cmd_line)
 {
+  return process_execute(cmd_line);
 }
 
 /* Waits for a child process pid and retrieves the child's exit status. */
@@ -194,9 +215,16 @@ void call_remove(struct intr_frame *f)
   void *esp = f->esp;
   if (!ptr_valid(esp + 4, 1))
     exit(-1);
+  char *file = *(char **)(esp + 4);
+  if (file == NULL || !ptr_valid(file, 1))
+    exit(-1);
+  lock_acquire(&fd_lock);
+  f->eax = remove(file);
+  lock_release(&fd_lock);
 }
 bool remove(const char *file)
 {
+  return filesys_remove(file);
 }
 
 /* Opens the file called file. Returns fd,
@@ -206,16 +234,17 @@ void call_open(struct intr_frame *f)
   void *esp = f->esp;
   if (!ptr_valid(esp + 4, 1))
     exit(-1);
-  char *file = *(char **)(esp + 4);
-  if (file == NULL || !ptr_valid(file, 1))
+  char *file_name = *(char **)(esp + 4);
+  if (file_name == NULL || !ptr_valid(file_name, 1))
     exit(-1);
   lock_acquire(&fd_lock);
-  f->eax = open(file);
+  f->eax = open(file_name);
   lock_release(&fd_lock);
 }
-int open(const char *file)
+
+int open(const char *file_name)
 {
-  struct file *FILE = filesys_open(file);
+  struct file *FILE = filesys_open(file_name);
   if (FILE == NULL)
     return -1;
   // 文件关闭之后一定记得释放FD避免内存泄漏！！！
@@ -224,8 +253,9 @@ int open(const char *file)
     return -1;
   FD->file = FILE;
   FD->num = fd_num;
-  list_push_back(&thread_current()->fd_list, &FD->elem);
-  return fd_num++;
+  list_push_back(&thread_current()->process_info->fd_list, &FD->elem);
+  fd_num++;
+  return FD->num;
 }
 
 /* Returns the size, in bytes, of the file open as fd. */
@@ -291,14 +321,15 @@ void call_write(struct intr_frame *f)
   void *esp = f->esp;
   if (!ptr_valid(esp + 4, 3))
     exit(-1);
-  int fd = *(int *)(f->esp + 4);
-  void *buffer = *(char **)(f->esp + 8);
-  unsigned size = *(unsigned *)(f->esp + 12);
+  int fd = *(int *)(esp + 4);
+  void *buffer = *(char **)(esp + 8);
+  unsigned size = *(unsigned *)(esp + 12);
   if (buffer == NULL || !ptr_valid(buffer, 1))
     exit(-1);
+  lock_acquire(&fd_lock);
   f->eax = write(fd, buffer, size);
+  lock_release(&fd_lock);
 }
-
 int write(int fd, const void *buffer, unsigned size)
 {
   if (fd == 1)
@@ -322,9 +353,19 @@ void call_seek(struct intr_frame *f)
   void *esp = f->esp;
   if (!ptr_valid(esp + 4, 2))
     exit(-1);
+  int fd = *(int *)(f->esp + 4);
+  unsigned position = *(unsigned *)(f->esp + 8);
+  lock_acquire(&fd_lock);
+  seek(fd, position);
+  lock_release(&fd_lock);
 }
 void seek(int fd, unsigned position)
 {
+  struct file_descriptor *FD = get_fd(thread_current(), fd);
+  if (FD == NULL)
+    return;
+
+  file_seek(FD->file, position);
 }
 
 /* Returns the position of the next byte to be read or written in open file fd, 
@@ -334,9 +375,18 @@ void call_tell(struct intr_frame *f)
   void *esp = f->esp;
   if (!ptr_valid(esp + 4, 1))
     exit(-1);
+  int fd = *(int *)(f->esp + 4);
+  lock_acquire(&fd_lock);
+  f->eax = tell(fd);
+  lock_release(&fd_lock);
 }
 unsigned tell(int fd)
 {
+  struct file_descriptor *FD = get_fd(thread_current(), fd);
+  if (FD == NULL)
+    return -1;
+
+  return file_tell(FD->file);
 }
 
 /* Closes the description fd */
