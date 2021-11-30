@@ -1,3 +1,6 @@
+#include "filesys/file.h"
+#include "threads/synch.h"
+
 #ifndef USERPROG_SYSCALL_H
 #define USERPROG_SYSCALL_H
 typedef int pid_t;
@@ -6,6 +9,16 @@ typedef int pid_t;
 struct lock fd_lock;
 // struct list file_opened_list;
 int fd_num;
+
+struct file_descriptor
+{
+    int num;
+    struct file *file;
+    struct list_elem elem;
+};
+
+typedef struct file_descriptor file_descriptor_t;
+typedef struct file_descriptor *file_descriptor_t_ptr;
 
 void syscall_init(void);
 

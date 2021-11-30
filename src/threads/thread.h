@@ -27,16 +27,6 @@ typedef int tid_t;
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63     /* Highest priority. */
 
-struct file_descriptor
-{
-   int num;
-   struct file *file;
-   struct list_elem elem;
-};
-
-typedef struct file_descriptor file_descriptor_t;
-typedef struct file_descriptor *file_descriptor_t_ptr;
-
 /**
  * 这里只实现了子进程相关需要变量，建议将文件管理打开等变量也整合进来
  * 
@@ -134,6 +124,7 @@ struct thread
    // #ifdef USERPROG
    /* Owned by userprog/process.c. */
    uint32_t *pagedir; /* Page directory. */
+   struct file *exec_file;
    process_info_t_ptr process_info;
    // #endif
 
