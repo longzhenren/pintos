@@ -3,6 +3,10 @@
 typedef int pid_t;
 #define bool _Bool
 
+struct lock fd_lock;
+// struct list file_opened_list;
+int fd_num;
+
 void syscall_init(void);
 
 // void call_halt(void);

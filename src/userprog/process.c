@@ -1,4 +1,5 @@
 #include "userprog/process.h"
+#include "userprog/syscall.h"
 #include <debug.h>
 #include <inttypes.h>
 #include <round.h>
@@ -23,17 +24,36 @@
 struct lock lock_filesys;
 struct process_init_data
 {
-  char *args;                /* 传入的参数*/
-  struct semaphore sema;     /* 父进程等待子进程的信号量 */
-  bool load_status;          /* 是否成功开启进程*/
-  struct process_info *info; /*保存进程的进程信息 */
+  char *args;              /* 传入的参数*/
+  struct semaphore sema;   /* 父进程等待子进程的信号量 */
+  bool load_status;        /* 是否成功开启进程*/
+  process_info_t_ptr info; /*保存进程的进程信息 */
 };
-typedef void process_action_func(struct process_info *info, void *aux);
-static bool init_process_info(struct process_info **info_ptr);
+
+typedef struct process_init_data process_init_data_t;
+typedef struct process_init_data *process_init_data_t_ptr;
+
+typedef void process_action_func(process_info_t_ptr info, void *aux);
+static bool init_process_info(process_info_t_ptr *info_ptr);
 static void start_process(void *init_data_);
 static bool load(const char *cmdline, void (**eip)(void), void **esp);
 void main_init(void);
 void process_foreach(struct list *list, process_action_func *func, void *aux);
+void close_all_for_current(void);
+
+void close_all_for_current(void)
+{
+  struct thread *t = thread_current();
+
+  while (!list_empty(&t->process_info->fd_list))
+  {
+    struct list_elem *e = list_pop_front(&t->process_info->fd_list);
+    file_descriptor_t_ptr fd = list_entry(e, file_descriptor_t, elem);
+
+    file_close(fd->file);
+    free(fd);
+  }
+}
 
 /**
  * 在thread/init.c中补充初始化主进程的信息
@@ -43,7 +63,7 @@ void process_foreach(struct list *list, process_action_func *func, void *aux);
 void main_init(void)
 {
 
-  struct process_info *main_info;
+  process_info_t_ptr main_info;
 
   bool result = init_process_info(&main_info);
 
@@ -57,7 +77,7 @@ void main_init(void)
  * @param init_data 
  * @param args_copy 
  */
-void process_set_init_data(struct process_init_data *init_data, char *args_copy)
+void process_set_init_data(process_init_data_t_ptr init_data, char *args_copy)
 {
   init_data->args = args_copy;
   /**
@@ -68,10 +88,10 @@ void process_set_init_data(struct process_init_data *init_data, char *args_copy)
   init_data->load_status = false;
 }
 
-bool init_process_info(struct process_info **info_ptr)
+bool init_process_info(process_info_t_ptr *info_ptr)
 {
-  struct process_info *info = *info_ptr;
-  info = malloc(sizeof(struct process_info));
+  process_info_t_ptr info;
+  info = malloc(sizeof(process_info_t));
   if (info == NULL)
     return false;
 
@@ -85,7 +105,7 @@ bool init_process_info(struct process_info **info_ptr)
   lock_init(&(info->lock));
   cond_init(&(info->cond));
   list_init(&(info->children_list));
-  list_init(&(info->fd_list));
+  // list_init(&(info->fd_list));
   info->ret = 0;
   info->pid = -1;
   *info_ptr = info;
@@ -116,18 +136,18 @@ tid_t process_execute(const char *file_name)
   ASSERT(thread_name != NULL);
 
   /* setup the data struct to pass to start_process */
-  struct process_init_data init_data;
+  process_init_data_t init_data;
   process_set_init_data(&init_data, fn_copy);
 
   /*进行有关父子进程相关信息创建维护*/
-  struct process_info *child_info;
+  process_info_t_ptr child_info;
   if (init_process_info(&child_info) == false)
   {
     return -1;
   }
   init_data.info = child_info;
 
-  struct process_info *this_info = thread_current()->process_info;
+  process_info_t_ptr this_info = thread_current()->process_info;
   //将子进程列表放入父进程的子进程列表中
   list_push_back(&(this_info->children_list), &(child_info->child_elem));
 
@@ -138,7 +158,8 @@ tid_t process_execute(const char *file_name)
     sema_down(&(init_data.sema));
   }
 
-  palloc_free_page(fn_copy);
+  if (tid == TID_ERROR)
+    palloc_free_page(fn_copy);
 
   if (!init_data.load_status)
   {
@@ -152,8 +173,8 @@ tid_t process_execute(const char *file_name)
    running. */
 static void start_process(void *init_data_)
 {
-  struct process_init_data *init_data = (struct process_init_data *)init_data_;
-  char *file_name = init_data->args;
+  process_init_data_t_ptr init_data = (process_init_data_t_ptr)init_data_;
+  char *args = init_data->args;
 
   struct intr_frame if_;
   bool success;
@@ -164,8 +185,8 @@ static void start_process(void *init_data_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
 
-  char *tmp = malloc(strlen(file_name) + 1);
-  strlcpy(tmp, file_name, strlen(file_name) + 1);
+  char *tmp = malloc(strlen(args) + 1);
+  strlcpy(tmp, args, strlen(args) + 1);
   char *save_ptr = NULL;
   tmp = strtok_r(tmp, " ", &save_ptr);
 
@@ -190,6 +211,8 @@ static void start_process(void *init_data_)
 
   if (!success)
   {
+    palloc_free_page(args);
+
     process_close(-1);
     thread_exit();
   }
@@ -227,6 +250,7 @@ static void start_process(void *init_data_)
   if_.esp = p; // 栈更新
   // free(p);
   free(tmp);
+  palloc_free_page(args);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -248,27 +272,38 @@ static void start_process(void *init_data_)
  * @param child_pid 
  * @return struct process_info* 
  */
-struct process_info *
-process_get_info(struct process_info *parent_info, pid_t child_pid)
+process_info_t_ptr process_get_info(process_info_t_ptr parent_info, pid_t child_pid)
 {
   struct list_elem *e;
   struct list *list = &(parent_info->children_list);
 
   for (e = list_begin(list); e != list_end(list); e = list_next(e))
   {
-    struct process_info *info = list_entry(e, struct process_info,
-                                           child_elem);
+    process_info_t_ptr info = list_entry(e, process_info_t,
+                                         child_elem);
     if (info->pid == child_pid)
       return info;
   }
   return NULL;
 }
+
+/**
+ * @brief 获取当前进程信息
+ * 
+ * @param child_pid 
+ * @return struct process_info* 
+ */
+process_info_t_ptr process_get_info_for_current(pid_t child_pid)
+{
+  return process_get_info(thread_current()->process_info, child_pid);
+}
+
 /**
  * @brief 释放掉所有已退出子进程的信息，如果没退出，就等待
  * 
  * @param parent_info 
  */
-void process_free_children(struct process_info *parent_info)
+void process_free_children(process_info_t_ptr parent_info)
 {
   struct list *list = &(parent_info->children_list);
   struct list_elem *e;
@@ -277,8 +312,7 @@ void process_free_children(struct process_info *parent_info)
   e = list_begin(list);
   while (e != list_end(list))
   {
-    struct process_info *child_info =
-        list_entry(e, struct process_info, child_elem);
+    process_info_t_ptr child_info = list_entry(e, process_info_t, child_elem);
 
     ne = list_next(e);
 
@@ -304,8 +338,7 @@ void process_free_children(struct process_info *parent_info)
    does nothing. */
 int process_wait(tid_t child_tid UNUSED)
 {
-  struct process_info *child_info =
-      process_get_info(thread_current()->process_info, child_tid);
+  process_info_t_ptr child_info = process_get_info_for_current(child_tid);
 
   if (child_info == NULL)
     return -1;
@@ -323,6 +356,7 @@ int process_wait(tid_t child_tid UNUSED)
   result = child_info->ret;
   child_info->is_waited = true;
   child_info->ret = -1;
+
   lock_release(&(child_info->lock));
 
   return result;
@@ -333,7 +367,7 @@ int process_wait(tid_t child_tid UNUSED)
  * @param info 
  * @param UNUSED 
  */
-void release_children_locks(struct process_info *info, void *aux UNUSED)
+void release_children_locks(process_info_t_ptr info, void *aux UNUSED)
 {
   if (lock_held_by_current_thread(&(info->lock)))
     lock_release(&(info->lock));
@@ -345,7 +379,7 @@ void release_children_locks(struct process_info *info, void *aux UNUSED)
  * @param info 
  * @param UNUSED 
  */
-void set_parent_dead(struct process_info *info, void *aux UNUSED)
+void set_parent_dead(process_info_t_ptr info, void *aux UNUSED)
 {
   lock_acquire(&(info->lock));
   info->is_parentalive = false;
@@ -374,7 +408,7 @@ void process_exit(void)
     pagedir_activate(NULL);
     pagedir_destroy(pd);
   }
-  struct process_info *info = cur->process_info;
+  process_info_t_ptr info = cur->process_info;
 
   /* 关闭所有打开的文件 */
   //process_fd_close_all(info);
@@ -387,6 +421,15 @@ void process_exit(void)
 
   if (!lock_held_by_current_thread(&info->lock))
     lock_acquire(&(info->lock));
+
+  close_all_for_current();
+
+  // if (cur->process_info->exec_file != NULL)
+  // {
+  //   file_allow_write(cur->process_info->exec_file);
+  //   file_close(cur->process_info->exec_file);
+  //   cur->process_info->exec_file = NULL;
+  // }
 
   /* 更改进程状态为已经退出 */
   info->is_alive = false;
@@ -433,7 +476,7 @@ void process_foreach(struct list *list, process_action_func *func, void *aux)
   for (e = list_begin(list); e != list_end(list);
        e = list_next(e))
   {
-    struct process_info *info = list_entry(e, struct process_info, child_elem);
+    process_info_t_ptr info = list_entry(e, process_info_t, child_elem);
 
     func(info, aux);
   }
@@ -446,7 +489,8 @@ void process_foreach(struct list *list, process_action_func *func, void *aux)
  */
 void process_close(int ret)
 {
-  struct process_info *info = thread_current()->process_info;
+  process_info_t_ptr info = thread_current()->process_info;
+
   lock_acquire(&(info->lock));
   info->ret = ret;
   lock_release(&(info->lock));
@@ -555,6 +599,7 @@ bool load(const char *file_name, void (**eip)(void), void **esp)
   process_activate();
 
   /* Open executable file. */
+  lock_acquire(&fd_lock);
   file = filesys_open(file_name);
   if (file == NULL)
   {
@@ -638,7 +683,21 @@ bool load(const char *file_name, void (**eip)(void), void **esp)
 
 done:
   /* We arrive here whether the load is successful or not. */
-  file_close(file);
+  if (success)
+  {
+    //t->exec_file = file;
+    //printf("%d\n", t->tid);
+    // t->process_info->exec_file = file;
+    // file_deny_write(t->process_info->exec_file);
+    file_deny_write(file);
+  }
+  else
+  {
+    file_close(file);
+  }
+
+  lock_release(&fd_lock);
+
   return success;
 }
 
@@ -763,7 +822,7 @@ setup_stack(void **esp)
   {
     success = install_page(((uint8_t *)PHYS_BASE) - PGSIZE, kpage, true);
     if (success)
-      *esp = PHYS_BASE;
+      *esp = PHYS_BASE - 12;
     else
       palloc_free_page(kpage);
   }
