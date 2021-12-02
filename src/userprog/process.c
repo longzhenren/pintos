@@ -185,11 +185,10 @@ tid_t process_execute(const char *file_name)
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(thread_name, PRI_DEFAULT, start_process, (void *)&init_data);
   if (tid != TID_ERROR)
-    22
-    {
+  {
       // 等待进程开始函数完成加载可执行文件操作
-      sema_down(&(init_data.sema));
-    }
+    sema_down(&(init_data.sema));
+  }
 
   // 在进程开始函数中完成加载可执行文件后再执行下面的语句
   // 一定要把这部分占用的一页的内存释放掉
