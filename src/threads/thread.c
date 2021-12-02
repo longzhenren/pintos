@@ -451,6 +451,7 @@ init_thread(struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
+  // 初始化可执行文件为空
   t->exec_file = NULL;
 
   old_level = intr_disable();

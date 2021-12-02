@@ -6,18 +6,28 @@
 typedef int pid_t;
 #define bool _Bool
 
-struct lock fd_lock;
 // struct list file_opened_list;
-int fd_num;
 
+// 全局文件锁
+struct lock g_fd_lock;
+
+// 全局文件描述符标号
+int g_fd_num;
+
+/**
+ * @brief 文件描述符
+ * 
+ */
 struct file_descriptor
 {
-    int num;
-    struct file *file;
-    struct list_elem elem;
+    int num;               // 标号
+    struct file *file;     // 文件
+    struct list_elem elem; // 列表项
 };
 
+// 文件描述符
 typedef struct file_descriptor file_descriptor_t;
+// 文件描述符的指针
 typedef struct file_descriptor *file_descriptor_t_ptr;
 
 void syscall_init(void);
@@ -36,6 +46,7 @@ void syscall_init(void);
 // void call_tell(struct intr_frame *);
 // void call_close(struct intr_frame *);
 
+// 以下是本次实验要实现的所有系统调用接口
 void halt(void);
 void exit(int);
 pid_t exec(const char *);
