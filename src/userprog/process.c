@@ -21,18 +21,34 @@
 #include "devices/timer.h"
 #include "threads/synch.h"
 
-struct lock lock_filesys;
+#define ESP_PUSH(ESP, VALUE) *(--ESP) = VALUE
+
+#define ESP_PUSH_BATCH(ESP, ARRAY, START, END) \
+  for (int i = START; i >= END; i--)           \
+  ESP_PUSH(ESP, ARRAY[i])
+
+#define ESP_WORD_ALIGN(ESP) \
+  while ((int)ESP % 4 != 0) \
+  ESP_PUSH(ESP, '\0')
+
+/**
+ * @brief 进程初始化数据
+ * 
+ */
 struct process_init_data
 {
   char *args;              /* 传入的参数*/
   struct semaphore sema;   /* 父进程等待子进程的信号量 */
   bool load_status;        /* 是否成功开启进程*/
-  process_info_t_ptr info; /*保存进程的进程信息 */
+  process_info_t_ptr info; /* 保存进程的进程信息 */
 };
 
+// 进程初始化数据
 typedef struct process_init_data process_init_data_t;
+// 进程初始化数据的指针
 typedef struct process_init_data *process_init_data_t_ptr;
 
+// 对进程进行遍历时要执行的函数
 typedef void process_action_func(process_info_t_ptr info, void *aux);
 static bool init_process_info(process_info_t_ptr *info_ptr);
 static void start_process(void *init_data_);
@@ -41,9 +57,15 @@ void main_init(void);
 void process_foreach(struct list *list, process_action_func *func, void *aux);
 void close_all_for_current(void);
 
+/**
+ * @brief 关闭当前线程所有打开的文件
+ * 
+ */
 void close_all_for_current(void)
 {
   struct thread *t = thread_current();
+
+  lock_acquire(&g_fd_lock);
 
   while (!list_empty(&t->process_info->fd_list))
   {
@@ -53,6 +75,8 @@ void close_all_for_current(void)
     file_close(fd->file);
     free(fd);
   }
+
+  lock_release(&g_fd_lock);
 }
 
 /**
@@ -62,12 +86,11 @@ void close_all_for_current(void)
  */
 void main_init(void)
 {
-
   process_info_t_ptr main_info;
 
   bool result = init_process_info(&main_info);
 
-  main_info->is_parentalive = false;
+  main_info->is_main = true;
   struct thread *t = thread_current();
   t->process_info = main_info;
 }
@@ -88,9 +111,17 @@ void process_set_init_data(process_init_data_t_ptr init_data, char *args_copy)
   init_data->load_status = false;
 }
 
+/**
+ * @brief 初始化进程信息
+ * 
+ * @param info_ptr 
+ * @return true 
+ * @return false 
+ */
 bool init_process_info(process_info_t_ptr *info_ptr)
 {
   process_info_t_ptr info;
+  // 在进程退出时释放分配的内存
   info = malloc(sizeof(process_info_t));
   if (info == NULL)
     return false;
@@ -100,12 +131,12 @@ bool init_process_info(process_info_t_ptr *info_ptr)
 
   info->is_alive = true;
   info->is_waited = false;
-  info->is_parentalive = true;
-  info->exec_file = NULL;
+  info->is_main = false;
+
   lock_init(&(info->lock));
   cond_init(&(info->cond));
   list_init(&(info->children_list));
-  // list_init(&(info->fd_list));
+
   info->ret = 0;
   info->pid = -1;
   *info_ptr = info;
@@ -139,7 +170,7 @@ tid_t process_execute(const char *file_name)
   process_init_data_t init_data;
   process_set_init_data(&init_data, fn_copy);
 
-  /*进行有关父子进程相关信息创建维护*/
+  /* 进行有关父子进程相关信息创建维护 */
   process_info_t_ptr child_info;
   if (init_process_info(&child_info) == false)
   {
@@ -154,13 +185,17 @@ tid_t process_execute(const char *file_name)
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(thread_name, PRI_DEFAULT, start_process, (void *)&init_data);
   if (tid != TID_ERROR)
-  {
-    sema_down(&(init_data.sema));
-  }
+    22
+    {
+      // 等待进程开始函数完成加载可执行文件操作
+      sema_down(&(init_data.sema));
+    }
 
-  if (tid == TID_ERROR)
-    palloc_free_page(fn_copy);
+  // 在进程开始函数中完成加载可执行文件后再执行下面的语句
+  // 一定要把这部分占用的一页的内存释放掉
+  palloc_free_page(fn_copy);
 
+  // 未加载成功
   if (!init_data.load_status)
   {
     return TID_ERROR;
@@ -193,64 +228,57 @@ static void start_process(void *init_data_)
   success = load(tmp, &if_.eip, &if_.esp);
 
   /**
- * 初始化进程信息
- * 
- */
+   * 初始化进程信息
+   * 
+   */
   init_data->load_status = success;
   struct thread *t = thread_current();
   init_data->info->pid = (pid_t)t->tid;
   t->process_info = init_data->info;
 
-  /**
-   * 初始化完成后再释放掉可以保证主进程不中断
-   * 
-   */
+  /* 初始化完成后再释放掉可以保证主进程不中断 */
   sema_up(&(init_data->sema));
 
   /* If load failed, quit. */
-
   if (!success)
   {
-    palloc_free_page(args);
-
-    process_close(-1);
-    thread_exit();
+    exit(-1);
   }
 
   /* 参数传递 */
-  char *esp = (char *)if_.esp; // 维护栈顶
-  int argv[128];               // 存储的参数地址
-  int argc = 0, len = 0;       // argc:参数数量 len:tmp长度
+  /*
+  Address     Name	          Data	      Type
+  0xbffffffc	argv[3][...]	  bar\0	      char[4]
+  0xbffffff8	argv[2][...]	  foo\0	      char[4]
+  0xbffffff5	argv[1][...]	  -l\0	      char[3]
+  0xbfffffed	argv[0][...]	  /bin/ls\0	  char[8]
+  0xbfffffec	word-align	    0	          uint8_t
+  0xbfffffe8	argv[4]	        0	          char *
+  0xbfffffe4	argv[3]	        0xbffffffc	char *
+  0xbfffffe0	argv[2]	        0xbffffff8	char *
+  0xbfffffdc	argv[1]	        0xbffffff5	char *
+  0xbfffffd8	argv[0]	        0xbfffffed	char *
+  0xbfffffd4	argv	          0xbfffffd8	char **
+  0xbfffffd0	argc	          4	          int
+  0xbfffffcc	return address	0	          void (*) ()
+  */
+  char *esp = (char *)if_.esp; // 维护栈顶，转为char*就可以直接复制字符串进去了
+  int argv[128], argc = 0;     // argv:存储的参数地址 argc:参数数量 len:tmp长度
   for (; tmp != NULL; tmp = strtok_r(NULL, " ", &save_ptr))
   {
-    len = strlen(tmp) + 1;      //'(tmp)\0'
-    esp -= len;                 // decrements the stack pointer
-    strlcpy(esp, tmp, len + 1); // right-to-left order
-    argv[argc++] = (int)esp;
+    ESP_PUSH_BATCH(esp, tmp, strlen(tmp), 0); //'(tmp)\0'
+    argv[argc++] = (int)esp;                  // 记录参数地址
   }
-  while ((int)esp % 4 != 0)
-  { // word-align
-    esp--;
-  }
-  int *p = (int *)esp; // 接下来存argv地址
-  p--;
-  *p = 0; // argv[argc+1]
-  p--;
-  int i;
-  for (i = argc - 1; i >= 0; i--)
-  {
-    *p = argv[i];
-    p--;
-  }
-  *p = (int)(p + 1); // argv
-  p--;
-  *p = argc; // argc;
-  p--;
-  *p = 0;      // return address
-  if_.esp = p; // 栈更新
-  // free(p);
-  free(tmp);
-  palloc_free_page(args);
+  ESP_WORD_ALIGN(esp);                  // word-align
+  int *p = (int *)esp;                  // 接下来存argv地址，指针4个字节
+  ESP_PUSH(p, 0);                       // argv[argc + 1]
+  ESP_PUSH_BATCH(p, argv, argc - 1, 0); // argv[0:argc + 1]
+  ESP_PUSH(p, (int)(p + 1));            // argv
+  ESP_PUSH(p, argc);                    // argc;
+  ESP_PUSH(p, 0);                       // return address
+  if_.esp = p;                          // 栈更新
+
+  free(tmp); // 释放临时字符串占有的内存
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -277,13 +305,18 @@ process_info_t_ptr process_get_info(process_info_t_ptr parent_info, pid_t child_
   struct list_elem *e;
   struct list *list = &(parent_info->children_list);
 
-  for (e = list_begin(list); e != list_end(list); e = list_next(e))
+  for (e = list_begin(list);
+       e != list_end(list);
+       e = list_next(e))
   {
-    process_info_t_ptr info = list_entry(e, process_info_t,
-                                         child_elem);
+    process_info_t_ptr info = list_entry(e, process_info_t, child_elem);
+
     if (info->pid == child_pid)
+    {
       return info;
+    }
   }
+
   return NULL;
 }
 
@@ -303,7 +336,7 @@ process_info_t_ptr process_get_info_for_current(pid_t child_pid)
  * 
  * @param parent_info 
  */
-void process_free_children(process_info_t_ptr parent_info)
+void free_dead_children(process_info_t_ptr parent_info)
 {
   struct list *list = &(parent_info->children_list);
   struct list_elem *e;
@@ -323,7 +356,10 @@ void process_free_children(process_info_t_ptr parent_info)
       free(child_info);
     }
     else
+    {
       lock_release(&(child_info->lock));
+    }
+
     e = ne;
   }
 }
@@ -344,15 +380,16 @@ int process_wait(tid_t child_tid UNUSED)
     return -1;
 
   int result = -1;
-  /**
-   * 等待这个子进程结束
-   */
-  lock_acquire(&(child_info->lock));
 
+  /*  等待这个子进程结束 */
+  lock_acquire(&(child_info->lock));
+  //如果子进程还未退出
   if (!child_info->is_waited && child_info->is_alive)
   {
+    //等待退出
     cond_wait(&(child_info->cond), &(child_info->lock));
   }
+  //退出之后
   result = child_info->ret;
   child_info->is_waited = true;
   child_info->ret = -1;
@@ -361,33 +398,61 @@ int process_wait(tid_t child_tid UNUSED)
 
   return result;
 }
-/**
- * @brief 释放掉持有的所有子进程的锁
- * 
- * @param info 
- * @param UNUSED 
- */
-void release_children_locks(process_info_t_ptr info, void *aux UNUSED)
+void wait_children(process_info_t_ptr info, void *aux UNUSED)
 {
-  if (lock_held_by_current_thread(&(info->lock)))
-    lock_release(&(info->lock));
+  process_wait(info->pid);
+}
+/**
+ * @brief 遍历列表里所有进程
+ * 
+ * 
+ * @param list 
+ * @param func 
+ * @param aux 
+ */
+void process_foreach(struct list *list, process_action_func *func, void *aux)
+{
+  struct list_elem *e;
+
+  for (e = list_begin(list);
+       e != list_end(list);
+       e = list_next(e))
+  {
+    process_info_t_ptr info = list_entry(e, process_info_t, child_elem);
+
+    func(info, aux);
+  }
 }
 
-/**
- * @brief 设定子进程的父进程状态为结束
- * 
- * @param info 
- * @param UNUSED 
- */
-void set_parent_dead(process_info_t_ptr info, void *aux UNUSED)
-{
-  lock_acquire(&(info->lock));
-  info->is_parentalive = false;
-  lock_release(&(info->lock));
-}
+// /**
+//  * @brief 释放掉持有的所有子进程的锁
+//  *
+//  * @param info
+//  * @param UNUSED
+//  */
+// void release_children_locks(process_info_t_ptr info, void *aux UNUSED)
+// {
+//   if (lock_held_by_current_thread(&(info->lock)))
+//     lock_release(&(info->lock));
+// }
+
+// /**
+//  * @brief 设定子进程的父进程状态为结束
+//  *
+//  * @param info
+//  * @param UNUSED
+//  */
+// void set_parent_dead(process_info_t_ptr info, void *aux UNUSED)
+// {
+//   lock_acquire(&(info->lock));
+//   info->is_parentalive = false;
+//   lock_release(&(info->lock));
+// }
+
 /* Free the current process's resources. */
 void process_exit(void)
 {
+
   struct thread *cur = thread_current();
   uint32_t *pd;
 
@@ -410,27 +475,28 @@ void process_exit(void)
   }
   process_info_t_ptr info = cur->process_info;
 
-  /* 关闭所有打开的文件 */
-  //process_fd_close_all(info);
-
-  /* allow writes to the executable */
-  // if (!lock_held_by_current_thread(&lock_filesys))
-  //   lock_acquire(&lock_filesys);
-  // file_close(info->exec_file);
-  // lock_release(&lock_filesys);
-
   if (!lock_held_by_current_thread(&info->lock))
     lock_acquire(&(info->lock));
 
+  //等待所有子进程退出以后
+  process_foreach(&(info->children_list), &wait_children, NULL);
+
+  /* 更改进程状态为已经退出 */
+  info->is_alive = false;
+
+  /* 释放掉持有的子进程的锁 */
+  //process_foreach(&(info->children_list), &release_children_locks, NULL);
+
+  /* 父进程已经结束 */
+  // process_foreach(&(info->children_list), &set_parent_dead, NULL);
+
+  /* 释放掉所有已结束的子进程*/
+  free_dead_children(info);
+
+  /* 关闭所有打开的文件 */
   close_all_for_current();
 
-  // if (cur->process_info->exec_file != NULL)
-  // {
-  //   file_allow_write(cur->process_info->exec_file);
-  //   file_close(cur->process_info->exec_file);
-  //   cur->process_info->exec_file = NULL;
-  // }
-
+  /* allow writes to the executable */
   if (cur->exec_file != NULL)
   {
     file_allow_write(cur->exec_file);
@@ -438,21 +504,11 @@ void process_exit(void)
     cur->exec_file = NULL;
   }
 
-  /* 更改进程状态为已经退出 */
-  info->is_alive = false;
-
-  /* 释放掉持有的子进程的锁 */
-  process_foreach(&(info->children_list), &release_children_locks, NULL);
-
-  /*父进程已经结束 */
-  process_foreach(&(info->children_list), &set_parent_dead, NULL);
-
-  /* 释放掉所有已结束的子进程*/
-  process_free_children(info);
+  /* 打印退出信息 */
   printf("%s: exit(%d)\n", cur->name, info->ret);
 
-  /* 如果父进程已经结束了 */
-  if (!info->is_parentalive)
+  /* 如果是主进程，则没有父进程，直接释放 */
+  if (info->is_main)
   {
     lock_release(&(info->lock));
     free(info);
@@ -460,48 +516,12 @@ void process_exit(void)
   }
   else
   {
-    /**
-     * 如果父进程在等自己结束，告诉父进程自己结束了
-     * 
-     */
+    /* 如果父进程在等自己结束，告诉父进程自己结束了，结束父进程的等待 */
     cond_signal(&(info->cond), &(info->lock));
     lock_release(&(info->lock));
   }
 }
-/**
- * @brief 遍历列表里所有进程
- * 
- * 
- * @param list 
- * @param func 
- * @param aux 
- */
-void process_foreach(struct list *list, process_action_func *func, void *aux)
-{
-  struct list_elem *e;
 
-  for (e = list_begin(list); e != list_end(list);
-       e = list_next(e))
-  {
-    process_info_t_ptr info = list_entry(e, process_info_t, child_elem);
-
-    func(info, aux);
-  }
-}
-
-/**
- * @brief 退出的时候保存退出状态
- * 
- * @param ret 
- */
-void process_close(int ret)
-{
-  process_info_t_ptr info = thread_current()->process_info;
-
-  lock_acquire(&(info->lock));
-  info->ret = ret;
-  lock_release(&(info->lock));
-}
 /* Sets up the CPU for running user code in the current
    thread.
    This function is called on every context switch. */
@@ -606,7 +626,7 @@ bool load(const char *file_name, void (**eip)(void), void **esp)
   process_activate();
 
   /* Open executable file. */
-  lock_acquire(&fd_lock);
+  lock_acquire(&g_fd_lock);
   file = filesys_open(file_name);
   if (file == NULL)
   {
@@ -703,7 +723,7 @@ done:
     file_close(file);
   }
 
-  lock_release(&fd_lock);
+  lock_release(&g_fd_lock);
 
   return success;
 }

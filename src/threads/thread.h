@@ -28,28 +28,36 @@ typedef int tid_t;
 #define PRI_MAX 63     /* Highest priority. */
 
 /**
+ * 进程信息
  * 这里只实现了子进程相关需要变量，建议将文件管理打开等变量也整合进来
- * 
  */
 struct process_info
 {
    // saved file description list in call_open
-   struct list fd_list;
+   struct list fd_list; /* 文件描述符列表 */
 
-   pid_t pid;
+   pid_t pid; /* 进程pid，作为唯一标识 */
    bool is_waited;
    bool is_alive;
-   bool is_parentalive;
+   bool is_main;
    struct condition cond;
    struct lock lock;
    struct list_elem child_elem;
-   struct file *exec_file;
+   // struct file *exec_file;
    struct list children_list;
 
-   int ret;
+   int ret; /* 退出代码 */
 };
 
+/**
+ * 进程信息
+ * 这里只实现了子进程相关需要变量，建议将文件管理打开等变量也整合进来
+ */
 typedef struct process_info process_info_t;
+/**
+ * 进程信息的指针
+ * 这里只实现了子进程相关需要变量，建议将文件管理打开等变量也整合进来
+ */
 typedef struct process_info *process_info_t_ptr;
 
 /* A kernel thread or user process.
@@ -123,9 +131,9 @@ struct thread
 
    // #ifdef USERPROG
    /* Owned by userprog/process.c. */
-   uint32_t *pagedir; /* Page directory. */
-   struct file *exec_file;
-   process_info_t_ptr process_info;
+   uint32_t *pagedir;               /* Page directory. */
+   struct file *exec_file;          /* 关联的可执行文件 */
+   process_info_t_ptr process_info; /* 保存进程信息 */
    // #endif
 
    /* Owned by thread.c. */
